@@ -8,7 +8,7 @@ import type { CallToolResult, ReadResourceResult } from "@modelcontextprotocol/s
 import { z } from "zod";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { CATALOG, CATALOG_META_KEY, priceCart } from "./catalog.js";
+import { CATALOG, CATALOG_META_KEY, createOrder, priceCart, type Order } from "./catalog.js";
 
 // Resolve the bundled UI relative to this module, working from both
 // source (server.ts) and compiled (dist/server.js).
@@ -17,6 +17,15 @@ const DIST_DIR = import.meta.filename.endsWith(".ts")
   : import.meta.dirname;
 
 const RESOURCE_URI = "ui://product-picker/mcp-app.html";
+
+// In-memory order store. Module-scoped (not inside createServer) so it survives
+// the per-request server rebuild on the HTTP path (see main.ts). Orders are lost
+// on restart and are not shared across separate processes (stdio vs http).
+const orders = new Map<string, Order>();
+let orderSeq = 1041;
+function nextOrderId(): string {
+  return `ORD-${++orderSeq}`;
+}
 
 // Shared input shape: a cart of { productId, quantity } entries.
 const cartItemsSchema = {
@@ -27,10 +36,6 @@ const cartItemsSchema = {
     }),
   ),
 };
-
-function formatMoney(amount: number, currency: string): string {
-  return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(amount);
-}
 
 export function createServer(): McpServer {
   const server = new McpServer({
@@ -84,27 +89,22 @@ export function createServer(): McpServer {
     },
   );
 
-  // Records the user's final cart and returns a human-readable priced summary.
-  server.registerTool(
-    "confirm-selection",
+  // User-placed order. App-only (visibility "app") so the model cannot place
+  // orders itself — only the picker UI button can. Persists the order in the
+  // module-level store and returns it as JSON for the UI to render.
+  registerAppTool(
+    server,
+    "place-order",
     {
-      title: "Confirm Selection",
-      description: "Record the user's selected products and return a priced summary.",
+      title: "Place Order",
+      description: "Place the user's selected cart as an order. Triggered by the UI only.",
       inputSchema: cartItemsSchema,
+      _meta: { ui: { resourceUri: RESOURCE_URI, visibility: ["app"] } },
     },
     async ({ items }): Promise<CallToolResult> => {
-      const { lines, itemCount, total, currency, unknownIds } = priceCart(items);
-      if (lines.length === 0) {
-        return { content: [{ type: "text", text: "No products were selected." }] };
-      }
-      const rendered = lines.map(
-        (l) => `- ${l.quantity}× ${l.name} — ${formatMoney(l.lineTotal, l.currency)}`,
-      );
-      let summary = `Selected ${itemCount} item(s):\n${rendered.join("\n")}\n\nTotal: ${formatMoney(total, currency)}`;
-      if (unknownIds.length > 0) {
-        summary += `\n\n(Ignored unknown ids: ${unknownIds.join(", ")})`;
-      }
-      return { content: [{ type: "text", text: summary }] };
+      const order = createOrder(items, nextOrderId());
+      orders.set(order.id, order);
+      return { content: [{ type: "text", text: JSON.stringify(order) }] };
     },
   );
 
