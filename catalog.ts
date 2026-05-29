@@ -147,6 +147,7 @@ export interface Order {
   createdAt: string;
 }
 
+// Builds an Order from cart items. Unknown product ids are dropped (not validated).
 export function createOrder(items: CartItemInput[], id: string): Order {
   const { lines, itemCount, total, currency } = priceCart(items);
   return {
