@@ -164,3 +164,51 @@
   opacity: 0.45;
   cursor: not-allowed;
 }
+
+.confirmation {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+}
+.confirmHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.confirmTitle {
+  font-size: 18px;
+  font-weight: 600;
+}
+.statusBadge {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: #e6f4ea;
+  color: #1e7e34;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+.orderId {
+  font-family: ui-monospace, monospace;
+  color: #555;
+}
+.orderLines {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.orderLine {
+  display: flex;
+  justify-content: space-between;
+}
+.orderTotal {
+  display: flex;
+  justify-content: space-between;
+  font-weight: 600;
+  border-top: 1px solid #ddd;
+  padding-top: 8px;
+}

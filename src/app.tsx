@@ -6,8 +6,10 @@ import { createRoot } from "react-dom/client";
 import {
   CATALOG,
   CATALOG_META_KEY,
+  createOrder,
   priceCart as priceCartLocal,
   type CartItemInput,
+  type Order,
   type PricedCart,
   type Product,
 } from "../catalog";
@@ -84,12 +86,21 @@ function HostApp() {
     [app],
   );
 
-  const onConfirm = useCallback(
-    async (cart: PricedCart) => {
-      if (!app) return;
+  const onPlaceOrder = useCallback(
+    async (cart: PricedCart): Promise<Order | null> => {
+      if (!app) return null;
       const items = cart.lines.map((l) => ({ productId: l.id, quantity: l.quantity }));
-      await app.callServerTool({ name: "confirm-selection", arguments: { items } });
-      await app.sendMessage({ role: "user", content: [{ type: "text", text: cartMessage(cart) }] });
+      const result = await app.callServerTool({ name: "place-order", arguments: { items } });
+      const order = parseJsonContent<Order>(result);
+      if (!order) return null;
+      await app.updateModelContext({
+        content: [{ type: "text", text: orderContextMarkdown(order) }],
+      });
+      await app.sendMessage({
+        role: "user",
+        content: [{ type: "text", text: "I've placed my order." }],
+      });
+      return order;
     },
     [app],
   );
@@ -97,28 +108,38 @@ function HostApp() {
   if (error) return <div className={styles.status}><strong>Error:</strong> {error.message}</div>;
   if (!app) return <div className={styles.status}>Connecting…</div>;
 
-  return <Picker products={products} insets={insets} priceCart={priceCart} onConfirm={onConfirm} />;
+  return <Picker products={products} insets={insets} priceCart={priceCart} onPlaceOrder={onPlaceOrder} />;
 }
 
 // ----- Standalone mode: runs in a plain browser with the local catalog -----
 
 function StandaloneApp() {
   const priceCart = useCallback<PriceCartFn>(async (items) => priceCartLocal(items), []);
-  const onConfirm = useCallback(async (cart: PricedCart) => {
-    window.alert(cartMessage(cart));
+  const onPlaceOrder = useCallback(async (cart: PricedCart): Promise<Order | null> => {
+    const items = cart.lines.map((l) => ({ productId: l.id, quantity: l.quantity }));
+    return createOrder(items, "ORD-LOCAL");
   }, []);
-  return <Picker products={CATALOG} priceCart={priceCart} onConfirm={onConfirm} />;
+  return <Picker products={CATALOG} priceCart={priceCart} onPlaceOrder={onPlaceOrder} />;
 }
 
 function emptyCart(): PricedCart {
   return { lines: [], itemCount: 0, total: 0, currency: "USD", unknownIds: [] };
 }
 
-function cartMessage(cart: PricedCart): string {
-  const lines = cart.lines.map(
-    (l) => `- ${l.quantity}× ${l.name} (${formatMoney(l.lineTotal, l.currency)})`,
-  );
-  return `I selected ${cart.itemCount} item(s):\n${lines.join("\n")}\n\nTotal: ${formatMoney(cart.total, cart.currency)}`;
+function orderContextMarkdown(order: Order): string {
+  const lines = order.lines
+    .map((l) => `- ${l.quantity}× ${l.name} — ${formatMoney(l.lineTotal, l.currency)}`)
+    .join("\n");
+  return `---
+order-id: ${order.id}
+status: ${order.status}
+item-count: ${order.itemCount}
+total: ${formatMoney(order.total, order.currency)}
+---
+
+The user placed order ${order.id} with ${order.itemCount} item(s):
+
+${lines}`;
 }
 
 // ----- Shared cart UI -----
@@ -127,14 +148,15 @@ interface PickerProps {
   products: Product[];
   insets?: Insets;
   priceCart: PriceCartFn;
-  onConfirm: (cart: PricedCart) => Promise<void>;
+  onPlaceOrder: (cart: PricedCart) => Promise<Order | null>;
 }
 
-function Picker({ products, insets, priceCart, onConfirm }: PickerProps) {
+function Picker({ products, insets, priceCart, onPlaceOrder }: PickerProps) {
   const [quantities, setQuantities] = useState<Map<string, number>>(new Map());
   const [cart, setCart] = useState<PricedCart>(emptyCart());
   const [pricing, setPricing] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [placedOrder, setPlacedOrder] = useState<Order | null>(null);
   const reqId = useRef(0);
 
   const items = useMemo<CartItemInput[]>(
@@ -173,17 +195,62 @@ function Picker({ products, insets, priceCart, onConfirm }: PickerProps) {
     });
   }, []);
 
-  const handleConfirm = useCallback(async () => {
+  const handlePlaceOrder = useCallback(async () => {
     if (cart.itemCount === 0) return;
     setSubmitting(true);
     try {
-      await onConfirm(cart);
+      const order = await onPlaceOrder(cart);
+      if (order) setPlacedOrder(order);
     } catch (e) {
       console.error(e);
     } finally {
       setSubmitting(false);
     }
-  }, [cart, onConfirm]);
+  }, [cart, onPlaceOrder]);
+
+  const startNewOrder = useCallback(() => {
+    setPlacedOrder(null);
+    setQuantities(new Map());
+  }, []);
+
+  if (placedOrder) {
+    return (
+      <main
+        className={styles.main}
+        style={{
+          paddingTop: insets?.top,
+          paddingRight: insets?.right,
+          paddingBottom: insets?.bottom,
+          paddingLeft: insets?.left,
+        }}
+      >
+        <div className={styles.confirmation}>
+          <div className={styles.confirmHeader}>
+            <span className={styles.confirmTitle}>Order placed</span>
+            <span className={styles.statusBadge}>{placedOrder.status}</span>
+          </div>
+          <div className={styles.orderId}>{placedOrder.id}</div>
+          <ul className={styles.orderLines}>
+            {placedOrder.lines.map((l) => (
+              <li key={l.id} className={styles.orderLine}>
+                <span>
+                  {l.quantity}× {l.name}
+                </span>
+                <span>{formatMoney(l.lineTotal, l.currency)}</span>
+              </li>
+            ))}
+          </ul>
+          <div className={styles.orderTotal}>
+            <span>Total</span>
+            <span>{formatMoney(placedOrder.total, placedOrder.currency)}</span>
+          </div>
+          <button className={styles.confirm} onClick={startNewOrder}>
+            Start new order
+          </button>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main
@@ -257,9 +324,9 @@ function Picker({ products, insets, priceCart, onConfirm }: PickerProps) {
         <button
           className={styles.confirm}
           disabled={cart.itemCount === 0 || submitting || pricing}
-          onClick={handleConfirm}
+          onClick={handlePlaceOrder}
         >
-          {submitting ? "Adding…" : "Add to chat"}
+          {submitting ? "Placing…" : "Place order"}
         </button>
       </div>
     </main>
