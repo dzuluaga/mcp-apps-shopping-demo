@@ -184,14 +184,14 @@
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  background: #e6f4ea;
-  color: #1e7e34;
+  background: light-dark(#e6f4ea, #1b3a26);
+  color: light-dark(#1e7e34, #5fd38a);
   padding: 2px 8px;
   border-radius: 999px;
 }
 .orderId {
   font-family: ui-monospace, monospace;
-  color: #555;
+  color: light-dark(#555, #aaa);
 }
 .orderLines {
   list-style: none;
@@ -209,6 +209,6 @@
   display: flex;
   justify-content: space-between;
   font-weight: 600;
-  border-top: 1px solid #ddd;
+  border-top: 1px solid light-dark(#ddd, #3a3a3a);
   padding-top: 8px;
 }
