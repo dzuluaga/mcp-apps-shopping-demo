@@ -1,8 +1,9 @@
 # Product Picker MCP App
 
-An MCP App for Claude Desktop that shows an interactive multi-product picker in
-the chat. Browse a grid of products, select several, confirm, and the selection
-is sent back into the conversation.
+An MCP App for Claude Desktop that shows an interactive product picker in the
+chat. Browse a grid of products, add items with quantity steppers, and the cart
+total is recomputed server-side on every change. Confirming sends the priced
+cart back into the conversation so Claude can act on it.
 
 ## Build
 
@@ -32,8 +33,11 @@ replacing the path with the absolute path to this project:
 ```
 
 Restart Claude Desktop. Then ask: "Show me the product picker." Claude calls
-`browse-products`, the grid renders inline, and confirming a selection adds the
-chosen products to the conversation.
+`browse-products`, the grid renders inline, you adjust quantities, and
+confirming adds the priced cart to the conversation.
+
+Product images load from picsum.photos (allowlisted via the resource CSP); if a
+host blocks them, each card falls back to an inline SVG placeholder.
 
 ## Preview in the browser
 
@@ -59,8 +63,9 @@ npx @modelcontextprotocol/inspector node dist/main.js --stdio   # inspect tools/
 
 ## Project layout
 
-- `server.ts` — MCP server: UI resource + `browse-products` / `confirm-selection`
+- `server.ts` — MCP server: UI resource + `browse-products`, `price-cart`
+  (UI-only, recomputes the total), `confirm-selection`
 - `main.ts` — stdio (Claude Desktop) and HTTP entrypoints
-- `catalog.ts` — sample products + pricing helper
-- `src/app.tsx` — React multi-select UI
+- `catalog.ts` — sample products + `priceCart` helper
+- `src/app.tsx` — React cart UI (host + standalone modes)
 - `mcp-app.html` / `vite.config.ts` — single-file UI bundle
