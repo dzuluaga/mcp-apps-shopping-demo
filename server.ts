@@ -21,8 +21,9 @@ const RESOURCE_URI = "ui://product-picker/mcp-app.html";
 // In-memory order store. Module-scoped (not inside createServer) so it survives
 // the per-request server rebuild on the HTTP path (see main.ts). Orders are lost
 // on restart and are not shared across separate processes (stdio vs http).
+// Written here, read by a later get-order / payment phase.
 const orders = new Map<string, Order>();
-let orderSeq = 1041;
+let orderSeq = 1041; // arbitrary starting id so demo orders look realistic (ORD-1042…)
 function nextOrderId(): string {
   return `ORD-${++orderSeq}`;
 }
