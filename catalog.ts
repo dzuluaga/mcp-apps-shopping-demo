@@ -134,3 +134,28 @@ export function priceCart(items: CartItemInput[]): PricedCart {
   const currency = lines[0]?.currency ?? "USD";
   return { lines, itemCount, total, currency, unknownIds };
 }
+
+export type OrderStatus = "placed"; // payment phase later adds "pending_payment" | "paid"
+
+export interface Order {
+  id: string;
+  lines: PricedCartLine[];
+  itemCount: number;
+  total: number;
+  currency: string;
+  status: OrderStatus;
+  createdAt: string;
+}
+
+export function createOrder(items: CartItemInput[], id: string): Order {
+  const { lines, itemCount, total, currency } = priceCart(items);
+  return {
+    id,
+    lines,
+    itemCount,
+    total,
+    currency,
+    status: "placed",
+    createdAt: new Date().toISOString(),
+  };
+}
