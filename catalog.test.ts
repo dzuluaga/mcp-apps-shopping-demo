@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { CATALOG, priceSelection } from "./catalog.js";
+import { CATALOG, priceCart } from "./catalog.js";
 
 describe("CATALOG", () => {
   it("has products with required fields", () => {
@@ -18,27 +18,58 @@ describe("CATALOG", () => {
   });
 });
 
-describe("priceSelection", () => {
-  it("totals known product prices", () => {
+describe("priceCart", () => {
+  it("returns an empty cart for no items", () => {
+    const cart = priceCart([]);
+    expect(cart.lines).toEqual([]);
+    expect(cart.itemCount).toBe(0);
+    expect(cart.total).toBe(0);
+    expect(cart.unknownIds).toEqual([]);
+  });
+
+  it("multiplies unit price by quantity", () => {
+    const p = CATALOG[0];
+    const cart = priceCart([{ productId: p.id, quantity: 3 }]);
+    expect(cart.lines).toHaveLength(1);
+    expect(cart.lines[0]).toMatchObject({
+      id: p.id,
+      unitPrice: p.price,
+      quantity: 3,
+      lineTotal: p.price * 3,
+    });
+    expect(cart.itemCount).toBe(3);
+    expect(cart.total).toBeCloseTo(p.price * 3, 2);
+  });
+
+  it("sums multiple lines in order", () => {
     const [a, b] = CATALOG;
-    const result = priceSelection([a.id, b.id]);
-    expect(result.items.map((i) => i.id)).toEqual([a.id, b.id]);
-    expect(result.total).toBeCloseTo(a.price + b.price, 2);
-    expect(result.unknownIds).toEqual([]);
+    const cart = priceCart([
+      { productId: a.id, quantity: 2 },
+      { productId: b.id, quantity: 1 },
+    ]);
+    expect(cart.lines.map((l) => l.id)).toEqual([a.id, b.id]);
+    expect(cart.itemCount).toBe(3);
+    expect(cart.total).toBeCloseTo(a.price * 2 + b.price, 2);
   });
 
-  it("ignores unknown ids but records them", () => {
+  it("records unknown ids and skips them", () => {
     const known = CATALOG[0];
-    const result = priceSelection([known.id, "does-not-exist"]);
-    expect(result.items.map((i) => i.id)).toEqual([known.id]);
-    expect(result.total).toBeCloseTo(known.price, 2);
-    expect(result.unknownIds).toEqual(["does-not-exist"]);
+    const cart = priceCart([
+      { productId: known.id, quantity: 1 },
+      { productId: "nope", quantity: 5 },
+    ]);
+    expect(cart.lines.map((l) => l.id)).toEqual([known.id]);
+    expect(cart.unknownIds).toEqual(["nope"]);
   });
 
-  it("returns zero total for empty selection", () => {
-    const result = priceSelection([]);
-    expect(result.items).toEqual([]);
-    expect(result.total).toBe(0);
-    expect(result.unknownIds).toEqual([]);
+  it("skips non-positive quantities", () => {
+    const known = CATALOG[0];
+    const cart = priceCart([
+      { productId: known.id, quantity: 0 },
+      { productId: known.id, quantity: -2 },
+    ]);
+    expect(cart.lines).toEqual([]);
+    expect(cart.itemCount).toBe(0);
+    expect(cart.total).toBe(0);
   });
 });

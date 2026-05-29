@@ -8,8 +8,23 @@ export interface Product {
   description: string;
 }
 
-export interface PricedSelection {
-  items: Product[];
+export interface CartItemInput {
+  productId: string;
+  quantity: number;
+}
+
+export interface PricedCartLine {
+  id: string;
+  name: string;
+  unitPrice: number;
+  currency: string;
+  quantity: number;
+  lineTotal: number;
+}
+
+export interface PricedCart {
+  lines: PricedCartLine[];
+  itemCount: number;
   total: number;
   currency: string;
   unknownIds: string[];
@@ -90,19 +105,28 @@ export const CATALOG: Product[] = [
   },
 ];
 
-export function priceSelection(productIds: string[]): PricedSelection {
+export function priceCart(items: CartItemInput[]): PricedCart {
   const byId = new Map(CATALOG.map((p) => [p.id, p]));
-  const items: Product[] = [];
+  const lines: PricedCartLine[] = [];
   const unknownIds: string[] = [];
-  for (const id of productIds) {
-    const product = byId.get(id);
-    if (product) {
-      items.push(product);
-    } else {
-      unknownIds.push(id);
+  for (const { productId, quantity } of items) {
+    const product = byId.get(productId);
+    if (!product) {
+      unknownIds.push(productId);
+      continue;
     }
+    if (quantity <= 0) continue;
+    lines.push({
+      id: product.id,
+      name: product.name,
+      unitPrice: product.price,
+      currency: product.currency,
+      quantity,
+      lineTotal: product.price * quantity,
+    });
   }
-  const total = items.reduce((sum, p) => sum + p.price, 0);
-  const currency = items[0]?.currency ?? "USD";
-  return { items, total, currency, unknownIds };
+  const itemCount = lines.reduce((sum, l) => sum + l.quantity, 0);
+  const total = lines.reduce((sum, l) => sum + l.lineTotal, 0);
+  const currency = lines[0]?.currency ?? "USD";
+  return { lines, itemCount, total, currency, unknownIds };
 }
