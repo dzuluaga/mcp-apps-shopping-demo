@@ -2,6 +2,7 @@
 // in deviceSigned, mirroring the spike's test/fixtures.mjs. Used by mdoc/mandate/
 // verify tests so we exercise the decode + gates without a live wallet.
 import { encode, Tag } from "cbor-x";
+import * as jose from "jose";
 
 export interface VpTokenOpts {
   txHashBytes: Uint8Array;
@@ -33,4 +34,16 @@ export function buildVpToken(opts: VpTokenOpts): string {
     },
   };
   return Buffer.from(encode({ version: "1.0", status: 0, documents: [doc] })).toString("base64url");
+}
+
+// Encrypt an OpenID4VP response { vp_token: { dpc: [vpStr] } } to the reader's
+// ephemeral public key, mirroring what the wallet sends back. The reader context
+// stores the PRIVATE jwk; we derive the public jwk from it to encrypt.
+export async function encryptToReaderKey(vpStr: string, ecdhPrivateJwk: jose.JWK): Promise<string> {
+  const { d, ...publicJwk } = ecdhPrivateJwk;
+  const pub = await jose.importJWK({ ...publicJwk, alg: "ECDH-ES" }, "ECDH-ES");
+  const plaintext = new TextEncoder().encode(JSON.stringify({ vp_token: { dpc: [vpStr] } }));
+  return await new jose.CompactEncrypt(plaintext)
+    .setProtectedHeader({ alg: "ECDH-ES", enc: "A256GCM" })
+    .encrypt(pub);
 }
