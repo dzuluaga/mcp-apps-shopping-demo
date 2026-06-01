@@ -3,7 +3,7 @@
   "buildCommand": "npm run build",
   "functions": {
     "api/index.ts": {
-      "includeFiles": "dist/**"
+      "includeFiles": "{dist/**,node_modules/@simplewebauthn/browser/**}"
     }
   },
   "rewrites": [{ "source": "/(.*)", "destination": "/api" }]
