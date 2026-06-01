@@ -1,5 +1,22 @@
 # Product Picker MCP App
 
+<table>
+<tr>
+<td align="center" width="50%">
+<a href="https://youtube.com/shorts/YiNzjIVcGOA">
+<img src="https://img.youtube.com/vi/YiNzjIVcGOA/hqdefault.jpg" width="280" alt="Demo: Product Picker in the Claude native app"><br>
+▶︎ Claude native app
+</a>
+</td>
+<td align="center" width="50%">
+<a href="https://youtube.com/shorts/M-Vw3rCxNK0">
+<img src="https://img.youtube.com/vi/M-Vw3rCxNK0/hqdefault.jpg" width="280" alt="Demo: Product Picker in ChatGPT"><br>
+▶︎ ChatGPT
+</a>
+</td>
+</tr>
+</table>
+
 An **agentic** shopping app for Claude Desktop. The embedded UI is deliberately
 small — it's just the visual part that benefits from being a widget: browse the
 product grid and adjust quantities right on each card. Everything else
@@ -38,6 +55,14 @@ reflected in the picker's cart badge, and anything you add in the picker shows
 up in chat. The cart is kept in-memory locally (lost on server restart); orders
 carry no server state — they're encoded into the checkout link. The checkout
 page is a mock (no real charge).
+
+## Demo
+
+See it running end to end (browse → edit cart → checkout hand-off):
+
+- **Claude native app:** <https://youtube.com/shorts/YiNzjIVcGOA>
+- **ChatGPT:** <https://youtube.com/shorts/M-Vw3rCxNK0>
+- **Claude desktop (claude.ai):** <https://youtu.be/MDlyOMIAgYg>
 
 ## Try the hosted demo
 
