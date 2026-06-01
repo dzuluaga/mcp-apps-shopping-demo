@@ -3,6 +3,7 @@
 // are derived from the request host so it works on localhost and Vercel HTTPS.
 import * as jose from "jose";
 import * as x509 from "@peculiar/x509";
+import type { webcrypto as NodeWebCrypto } from "node:crypto";
 import type { Order } from "../../catalog.js";
 import type { Origin } from "../origin.js";
 import { buildTransactionData, encodeTransactionData } from "./txData.js";
@@ -13,7 +14,7 @@ x509.cryptoProvider.set(webcrypto);
 
 const SIGN_ALG = { name: "ECDSA", namedCurve: "P-256", hash: "SHA-256" } as const;
 
-async function makeReaderCert(rpID: string): Promise<{ x5c: string; privateKey: CryptoKey }> {
+async function makeReaderCert(rpID: string): Promise<{ x5c: string; privateKey: NodeWebCrypto.CryptoKey }> {
   const keys = await webcrypto.subtle.generateKey(SIGN_ALG, true, ["sign", "verify"]);
   const cert = await x509.X509CertificateGenerator.createSelfSigned({
     serialNumber: "01",
