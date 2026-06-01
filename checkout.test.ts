@@ -51,6 +51,22 @@ describe("checkoutResponse", () => {
     expect(status).toBe(404);
   });
 
+  it("returns 404 for a decodable token that fails to render (bad currency)", () => {
+    // Passes decodeOrder's shape check (id/lines/currency are present and typed)
+    // but the currency code is invalid, so Intl.NumberFormat throws on render.
+    const malformed = {
+      id: "ORD-BADCUR",
+      lines: [{ id: "x", name: "Widget", unitPrice: 1, currency: "NOTACUR", quantity: 1, lineTotal: 1 }],
+      itemCount: 1,
+      total: 1,
+      currency: "NOTACUR",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    };
+    const token = Buffer.from(JSON.stringify(malformed), "utf8").toString("base64url");
+    const { status } = checkoutResponse(token);
+    expect(status).toBe(404);
+  });
+
   it("renders the order page from an encoded token", () => {
     const [a, b] = CATALOG;
     const { checkoutUrl, orderId } = createCheckoutOrder([

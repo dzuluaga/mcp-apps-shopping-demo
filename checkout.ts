@@ -28,7 +28,9 @@ function nextOrderId(): string {
 
 // An order is an immutable snapshot, so we carry it inside the checkout URL
 // instead of persisting it server-side. Stateless: works identically in stdio,
-// local HTTP, and serverless.
+// local HTTP, and serverless. The token is unsigned — anyone with the link can
+// read or hand-edit it, so the decoded order is NOT authoritative for pricing or
+// payment. Fine for this mock hand-off; a real merchant would sign or look it up.
 export function encodeOrder(order: Order): string {
   return Buffer.from(JSON.stringify(order), "utf8").toString("base64url");
 }
@@ -133,7 +135,15 @@ function renderNotFound(): string {
 export function checkoutResponse(token: string | undefined): { status: number; html: string } {
   const order = token ? decodeOrder(token) : undefined;
   if (!order) return { status: 404, html: renderNotFound() };
-  return { status: 200, html: renderCheckoutPage(order) };
+  // decodeOrder only checks the order's top-level shape. A token can still
+  // decode with a bad currency code or a malformed line, which would throw in
+  // Intl.NumberFormat / escapeHtml. Fall back to 404 so the stdio listener (raw
+  // http, no error middleware) returns cleanly instead of hanging the socket.
+  try {
+    return { status: 200, html: renderCheckoutPage(order) };
+  } catch {
+    return { status: 404, html: renderNotFound() };
+  }
 }
 
 // Lightweight standalone listener for the mock checkout page. Started alongside
