@@ -2,16 +2,22 @@
 
 <table>
 <tr>
-<td align="center" width="50%">
+<td align="center" width="33%">
 <a href="https://youtube.com/shorts/YiNzjIVcGOA">
 <img src="https://img.youtube.com/vi/YiNzjIVcGOA/hqdefault.jpg" width="280" alt="Demo: Product Picker in the Claude native app"><br>
 ▶︎ Claude native app
 </a>
 </td>
-<td align="center" width="50%">
+<td align="center" width="33%">
 <a href="https://youtube.com/shorts/M-Vw3rCxNK0">
 <img src="https://img.youtube.com/vi/M-Vw3rCxNK0/hqdefault.jpg" width="280" alt="Demo: Product Picker in ChatGPT"><br>
 ▶︎ ChatGPT
+</a>
+</td>
+<td align="center" width="33%">
+<a href="https://youtu.be/qAXgxuihbA8">
+<img src="https://img.youtube.com/vi/qAXgxuihbA8/hqdefault.jpg" width="280" alt="Demo: Utopia Marketplace in Goose, with passkey payment authorization"><br>
+▶︎ Goose + passkey checkout
 </a>
 </td>
 </tr>
