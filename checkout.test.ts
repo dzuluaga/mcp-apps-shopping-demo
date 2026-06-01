@@ -1,16 +1,34 @@
 import { describe, it, expect } from "vitest";
-import { CATALOG } from "./catalog.js";
-import { createCheckoutOrder, getOrder, checkoutResponse } from "./checkout.js";
+import { CATALOG, createOrder } from "./catalog.js";
+import {
+  createCheckoutOrder,
+  encodeOrder,
+  decodeOrder,
+  checkoutResponse,
+} from "./checkout.js";
+
+describe("encodeOrder / decodeOrder", () => {
+  it("round-trips an order", () => {
+    const order = createOrder([{ productId: CATALOG[0].id, quantity: 2 }], "ORD-ABC123");
+    const decoded = decodeOrder(encodeOrder(order));
+    expect(decoded).toEqual(order);
+  });
+
+  it("returns undefined for a non-decodable token", () => {
+    expect(decodeOrder("not-a-real-token")).toBeUndefined();
+  });
+});
 
 describe("createCheckoutOrder", () => {
-  it("creates a retrievable order and a checkout URL containing its id", () => {
+  it("returns an ORD- id and a checkout URL whose token decodes to the order", () => {
     const { orderId, checkoutUrl } = createCheckoutOrder([
       { productId: CATALOG[0].id, quantity: 2 },
     ]);
-    expect(orderId).toMatch(/^ORD-\d+$/);
-    expect(checkoutUrl).toContain(`order=${orderId}`);
-    const order = getOrder(orderId);
-    expect(order).toBeDefined();
+    expect(orderId).toMatch(/^ORD-[0-9A-F]{6}$/);
+    const token = new URL(checkoutUrl).searchParams.get("order");
+    expect(token).toBeTruthy();
+    const order = decodeOrder(token!);
+    expect(order?.id).toBe(orderId);
     expect(order?.lines.map((l) => l.id)).toEqual([CATALOG[0].id]);
   });
 
@@ -22,24 +40,25 @@ describe("createCheckoutOrder", () => {
 });
 
 describe("checkoutResponse", () => {
-  it("returns 404 for an undefined order id", () => {
+  it("returns 404 for an undefined token", () => {
     const { status, html } = checkoutResponse(undefined);
     expect(status).toBe(404);
     expect(html).toContain("Order not found");
   });
 
-  it("returns 404 for an unknown order id", () => {
-    const { status } = checkoutResponse("ORD-does-not-exist");
+  it("returns 404 for an undecodable token", () => {
+    const { status } = checkoutResponse("garbage-token");
     expect(status).toBe(404);
   });
 
-  it("renders the order page with line item names, total, and a place-order control", () => {
+  it("renders the order page from an encoded token", () => {
     const [a, b] = CATALOG;
-    const { orderId } = createCheckoutOrder([
+    const { checkoutUrl, orderId } = createCheckoutOrder([
       { productId: a.id, quantity: 2 },
       { productId: b.id, quantity: 1 },
     ]);
-    const { status, html } = checkoutResponse(orderId);
+    const token = new URL(checkoutUrl).searchParams.get("order")!;
+    const { status, html } = checkoutResponse(token);
     expect(status).toBe(200);
     expect(html).toContain(a.name);
     expect(html).toContain(b.name);

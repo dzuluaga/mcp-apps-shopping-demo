@@ -1,37 +1,56 @@
 import http from "node:http";
+import { randomBytes } from "node:crypto";
 import { createOrder, type CartItemInput, type Order } from "./catalog.js";
 
-// In-memory order store. Module-scoped so it survives the per-request server
-// rebuild on the HTTP path (see main.ts) and is shared with the checkout page
-// handler in the same process. Orders are lost on restart.
-const orders = new Map<string, Order>();
-let orderSeq = 1041; // arbitrary start so demo orders look realistic (ORD-1042…)
-function nextOrderId(): string {
-  return `ORD-${++orderSeq}`;
+// Base URL the checkout link points at. Falls back to localhost for local runs;
+// on Vercel it derives from the project's production domain so the link resolves
+// from the user's browser. HTTP entry / createApp may override via setCheckoutBaseUrl.
+function defaultBaseUrl(): string {
+  if (process.env.PUBLIC_BASE_URL) return process.env.PUBLIC_BASE_URL;
+  if (process.env.VERCEL_PROJECT_PRODUCTION_URL) {
+    return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`;
+  }
+  return `http://localhost:${process.env.CHECKOUT_PORT ?? "3030"}`;
 }
 
-// Base URL the checkout link points at. Defaults to the standalone listener's
-// localhost port, but in HTTP mode main.ts overrides it with the public origin
-// (PUBLIC_BASE_URL / the tunnel) so the link resolves from the user's browser.
-let checkoutBaseUrl =
-  process.env.PUBLIC_BASE_URL ?? `http://localhost:${process.env.CHECKOUT_PORT ?? "3030"}`;
+let checkoutBaseUrl = defaultBaseUrl();
 
 // Point the checkout link at a specific origin (trailing slashes trimmed).
-// Called by the HTTP entrypoint once it knows its public URL.
 export function setCheckoutBaseUrl(url: string): void {
   checkoutBaseUrl = url.replace(/\/+$/, "");
 }
 
-export function getOrder(id: string): Order | undefined {
-  return orders.get(id);
+// Random, no persistent counter (a counter cannot survive across serverless
+// instances). Six hex chars is plenty for a demo.
+function nextOrderId(): string {
+  return `ORD-${randomBytes(3).toString("hex").toUpperCase()}`;
 }
 
-// Snapshots cart items into a stored order and returns its id plus the URL of
-// the mock checkout page where the user completes the (simulated) purchase.
+// An order is an immutable snapshot, so we carry it inside the checkout URL
+// instead of persisting it server-side. Stateless: works identically in stdio,
+// local HTTP, and serverless.
+export function encodeOrder(order: Order): string {
+  return Buffer.from(JSON.stringify(order), "utf8").toString("base64url");
+}
+
+export function decodeOrder(token: string): Order | undefined {
+  try {
+    const order = JSON.parse(Buffer.from(token, "base64url").toString("utf8")) as Order;
+    if (!order || typeof order.id !== "string" || !Array.isArray(order.lines)) {
+      return undefined;
+    }
+    return order;
+  } catch {
+    return undefined;
+  }
+}
+
+// Snapshots cart items into an order and returns its id plus the URL of the mock
+// checkout page. The order itself rides in the URL's `order` token.
 export function createCheckoutOrder(items: CartItemInput[]): { orderId: string; checkoutUrl: string } {
   const order = createOrder(items, nextOrderId());
-  orders.set(order.id, order);
-  return { orderId: order.id, checkoutUrl: `${checkoutBaseUrl}/checkout?order=${order.id}` };
+  const token = encodeOrder(order);
+  return { orderId: order.id, checkoutUrl: `${checkoutBaseUrl}/checkout?order=${token}` };
 }
 
 function formatMoney(amount: number, currency: string): string {
@@ -104,10 +123,10 @@ function renderNotFound(): string {
 </body></html>`;
 }
 
-// Pure mapping from an order id to an HTTP response, shared by the stdio-side
-// listener and the express HTTP entrypoint.
-export function checkoutResponse(orderId: string | undefined): { status: number; html: string } {
-  const order = orderId ? orders.get(orderId) : undefined;
+// Pure mapping from an encoded order token to an HTTP response, shared by the
+// stdio-side listener and the express /checkout route.
+export function checkoutResponse(token: string | undefined): { status: number; html: string } {
+  const order = token ? decodeOrder(token) : undefined;
   if (!order) return { status: 404, html: renderNotFound() };
   return { status: 200, html: renderCheckoutPage(order) };
 }
