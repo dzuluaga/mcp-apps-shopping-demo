@@ -87,9 +87,9 @@ export function buildPasskeyMandate(args: {
       type: "webauthn.assertion" as const,
       credentialID: authenticator.credentialID,
       userVerified: authenticator.userVerified,
-      hardwareBacked:
-        authenticator.credentialDeviceType === "multiDevice" ||
-        authenticator.credentialDeviceType === "singleDevice",
+      // A single-device credential is bound to this authenticator's hardware; a
+      // multi-device (syncable) passkey is not strictly hardware-bound.
+      hardwareBacked: authenticator.credentialDeviceType === "singleDevice",
       deviceType: authenticator.credentialDeviceType,
       backedUp: authenticator.credentialBackedUp,
       rpID: origin.rpID,

@@ -81,8 +81,10 @@ checkout link directly at `http://localhost:3001/checkout?order=<token>` and
 click **Authorize payment**.
 
 - `GATE_SECRET` — HMAC key for challenge tokens. If unset, a per-process random
-  value is used (fine locally because one process spans issue + verify; set it
-  explicitly on serverless so it is stable across invocations).
+  value is used (fine locally because one process spans issue + verify).
+  **Required in production:** on serverless the "get options" and "verify"
+  requests may hit different instances, so without a stable shared `GATE_SECRET`
+  every cross-instance verify fails the signature check.
 - The `@simplewebauthn/browser` ESM is served same-origin from
   `/payment-gate/lib/sw/` (no CDN).
 

@@ -51,5 +51,3 @@ export async function verifyPasskeyAssertion(args: {
     credentialBackedUp: info.credentialBackedUp,
   };
 }
-
-export { issueChallenge };

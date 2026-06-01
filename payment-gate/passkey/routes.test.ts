@@ -25,6 +25,14 @@ describe("passkey gate routes", () => {
     expect(res.status).toBe(404);
   });
 
+  it("GET /payment-gate/passkey with a decodable token but bad currency → 404 (not 500)", async () => {
+    const app = createApp({ publicBaseUrl: "http://localhost:3001" });
+    const order = createOrder([{ productId: "drift-mouse", quantity: 1 }], "ORD-RT02");
+    const token = encodeOrder({ ...order, currency: "NOPE", lines: order.lines.map((l) => ({ ...l, currency: "NOPE" })) });
+    const res = await request(app).get(`/payment-gate/passkey?order=${token}`);
+    expect(res.status).toBe(404);
+  });
+
   it("GET /payment-gate/passkey/options returns options + a challenge token", async () => {
     const { app } = appWithOrderToken();
     const res = await request(app).get("/payment-gate/passkey/options");
