@@ -18,6 +18,7 @@ import {
   type PricedCart,
 } from "./catalog.js";
 import { createCheckoutOrder } from "./checkout.js";
+import { cartStore } from "./cartStore.js";
 
 // Resolve the bundled UI relative to this module, working from both
 // source (server.ts) and compiled (dist/server.js).
@@ -43,8 +44,22 @@ const UI_META = {
   "openai/outputTemplate": SKYBRIDGE_URI,
 };
 
+// On Vercel the bundle is included via vercel.json (dist/**) and resolves under
+// the function's cwd, which may differ from DIST_DIR. Try the module-relative
+// path first, then cwd/dist.
 async function loadBundle(): Promise<string> {
-  return fs.readFile(path.join(DIST_DIR, "mcp-app.html"), "utf-8");
+  const candidates = [
+    path.join(DIST_DIR, "mcp-app.html"),
+    path.join(process.cwd(), "dist", "mcp-app.html"),
+  ];
+  for (const candidate of candidates) {
+    try {
+      return await fs.readFile(candidate, "utf-8");
+    } catch {
+      // try next candidate
+    }
+  }
+  throw new Error(`Could not find mcp-app.html in: ${candidates.join(", ")}`);
 }
 
 // Cart-returning tools emit the same payload three ways so either host can read
@@ -59,33 +74,48 @@ function cartResult(priced: PricedCart): CallToolResult {
   };
 }
 
-// Shared server-side cart (productId -> quantity). Single source of truth for
-// both the UI and the model: the picker UI and the chat agent mutate the same
-// cart through set-quantity, so edits from either side stay consistent.
-// Module-scoped so it survives the per-request server rebuild on the HTTP path
-// (see main.ts). Demo-global (not per-conversation) — fine for a single-user
-// local app. The order store lives in checkout.ts.
-const cart = new Map<string, number>();
-
-function pricedCart(): PricedCart {
+// Shared cart (productId -> quantity). Single source of truth for both the UI
+// and the model: the picker UI and the chat agent mutate the same cart, so edits
+// from either side stay consistent. Persisted through cartStore — an in-memory
+// store locally (survives the per-request server rebuild on the HTTP path, see
+// main.ts) and Redis on Vercel (where module memory doesn't persist across
+// function instances). Demo-global (not per-conversation). Orders live in
+// checkout.ts. Every mutation is read -> mutate -> write so concurrent instances
+// converge on the shared store.
+function priceFrom(cart: Map<string, number>): PricedCart {
   const items = [...cart.entries()].map(([productId, quantity]) => ({ productId, quantity }));
   return priceCart(items);
 }
 
-function setQuantity(productId: string, quantity: number): PricedCart {
+async function readPriced(): Promise<PricedCart> {
+  return priceFrom(await cartStore.read());
+}
+
+async function setQuantity(productId: string, quantity: number): Promise<PricedCart> {
+  const cart = await cartStore.read();
   if (quantity <= 0) cart.delete(productId);
   else cart.set(productId, quantity);
-  return pricedCart();
+  await cartStore.write(cart);
+  return priceFrom(cart);
 }
 
 // Adds quantities on top of what's already in the cart (the picker's
 // "Add to cart" commits a batch; the agent can add items by id too).
-function addToCart(items: { productId: string; quantity: number }[]): PricedCart {
+async function addToCart(items: { productId: string; quantity: number }[]): Promise<PricedCart> {
+  const cart = await cartStore.read();
   for (const { productId, quantity } of items) {
     if (quantity <= 0) continue;
     cart.set(productId, (cart.get(productId) ?? 0) + quantity);
   }
-  return pricedCart();
+  await cartStore.write(cart);
+  return priceFrom(cart);
+}
+
+async function removeFromCart(productId: string): Promise<PricedCart> {
+  const cart = await cartStore.read();
+  cart.delete(productId);
+  await cartStore.write(cart);
+  return priceFrom(cart);
 }
 
 export function createServer(): McpServer {
@@ -113,7 +143,7 @@ export function createServer(): McpServer {
       // The catalog + cart ride in structuredContent (ChatGPT) and _meta (Claude,
       // out-of-band) so the UI can render without the model echoing the full list
       // back as text. The model sees only the short status line below.
-      const priced = pricedCart();
+      const priced = await readPriced();
       return {
         content: [
           {
@@ -161,7 +191,7 @@ export function createServer(): McpServer {
       _meta: UI_META,
     },
     async ({ items }): Promise<CallToolResult> => {
-      return cartResult(addToCart(items));
+      return cartResult(await addToCart(items));
     },
   );
 
@@ -183,7 +213,7 @@ export function createServer(): McpServer {
       _meta: UI_META,
     },
     async ({ productId, quantity }): Promise<CallToolResult> => {
-      return cartResult(setQuantity(productId, quantity));
+      return cartResult(await setQuantity(productId, quantity));
     },
   );
 
@@ -202,8 +232,7 @@ export function createServer(): McpServer {
       _meta: UI_META,
     },
     async ({ productId }): Promise<CallToolResult> => {
-      cart.delete(productId);
-      return cartResult(pricedCart());
+      return cartResult(await removeFromCart(productId));
     },
   );
 
@@ -220,7 +249,7 @@ export function createServer(): McpServer {
       _meta: UI_META,
     },
     async (): Promise<CallToolResult> => {
-      return cartResult(pricedCart());
+      return cartResult(await readPriced());
     },
   );
 
@@ -291,6 +320,7 @@ export function createServer(): McpServer {
       _meta: UI_META,
     },
     async (): Promise<CallToolResult> => {
+      const cart = await cartStore.read();
       if (cart.size === 0) {
         return {
           content: [{ type: "text", text: "The cart is empty — add items before checking out." }],
