@@ -80,7 +80,7 @@ export async function buildSignedRequest(order: Order, origin: Origin, secret: s
   const request = await new jose.SignJWT(requestObject)
     .setProtectedHeader({ alg: "ES256", typ: "oauth-authz-req+jwt", x5c: [x5c] })
     .setIssuedAt()
-    .sign(privateKey as unknown as jose.CryptoKey);
+    .sign(privateKey as unknown as jose.KeyLike);
 
   const readerContextToken = await sealReaderContext({ ecdhPrivateJwk, transactionDataB64: txDataB64 }, secret);
   return { request, readerContextToken };

@@ -113,6 +113,11 @@ function renderCheckoutPage(order: Order, token: string): string {
      text-align:center;color:#fff;background:#1a7f37;border-radius:8px;text-decoration:none;box-sizing:border-box;">
     Authorize payment
   </a>
+  <a id="authorize-xdev" href="/payment-gate/dc-payment?order=${encodeURIComponent(token)}"
+     style="display:block;margin-top:10px;width:100%;padding:12px;font-size:14px;font-weight:500;
+     text-align:center;color:#1a7f37;background:#fff;border:1px solid #1a7f37;border-radius:8px;text-decoration:none;box-sizing:border-box;">
+    Authorize on my phone (cross-device)
+  </a>
   <div class="note">You'll confirm the exact amount with your device. Demo — no real charge.</div>
   <button id="place">Place order (instant demo)</button>
   <div class="note">Skips the device prompt — no real charge.</div>

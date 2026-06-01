@@ -96,4 +96,11 @@ describe("checkout page authorization affordance", () => {
     expect(html).toContain("Authorize payment");
     expect(html).toContain("Place order");
   });
+
+  it("offers a secondary cross-device link to the DC payment gate", () => {
+    const order = createOrder([{ productId: "drift-mouse", quantity: 1 }], "ORD-CO02");
+    const { html } = checkoutResponse(encodeOrder(order));
+    expect(html).toContain("/payment-gate/dc-payment?order=");
+    expect(html).toContain("cross-device");
+  });
 });

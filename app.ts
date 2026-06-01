@@ -5,6 +5,7 @@ import type { Express, Request, Response } from "express";
 import { createServer } from "./server.js";
 import { checkoutResponse, setCheckoutBaseUrl } from "./checkout.js";
 import { registerPasskeyGate } from "./payment-gate/passkey/routes.js";
+import { registerDcPaymentGate } from "./payment-gate/dc-payment/routes.js";
 
 export interface AppOptions {
   publicBaseUrl: string;
@@ -49,6 +50,7 @@ export function createApp({ publicBaseUrl, allowedHosts }: AppOptions): Express 
   });
 
   registerPasskeyGate(app);
+  registerDcPaymentGate(app);
 
   return app;
 }
