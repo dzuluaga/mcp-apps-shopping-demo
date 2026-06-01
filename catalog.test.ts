@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { CATALOG, createOrder, priceCart } from "./catalog.js";
+import { CATALOG, createOrder, getProduct, getReviews, priceCart } from "./catalog.js";
 
 describe("CATALOG", () => {
   it("has products with required fields", () => {
@@ -96,9 +96,8 @@ describe("createOrder", () => {
     expect(order.id).toBe("ORD-1042");
   });
 
-  it('sets status to "placed" and an ISO createdAt', () => {
+  it("records an ISO createdAt", () => {
     const order = createOrder([{ productId: CATALOG[0].id, quantity: 1 }], "ORD-X");
-    expect(order.status).toBe("placed");
     expect(() => new Date(order.createdAt).toISOString()).not.toThrow();
     expect(new Date(order.createdAt).toISOString()).toBe(order.createdAt);
   });
@@ -121,5 +120,36 @@ describe("createOrder", () => {
     expect(order.lines).toEqual([]);
     expect(order.itemCount).toBe(0);
     expect(order.total).toBe(0);
+  });
+});
+
+describe("getProduct", () => {
+  it("returns the product for a known id", () => {
+    const p = CATALOG[0];
+    expect(getProduct(p.id)).toBe(p);
+  });
+
+  it("returns undefined for an unknown id", () => {
+    expect(getProduct("nope")).toBeUndefined();
+  });
+});
+
+describe("getReviews", () => {
+  it("returns a non-empty review list for every catalog product", () => {
+    for (const p of CATALOG) {
+      const reviews = getReviews(p.id);
+      expect(reviews.length).toBeGreaterThan(0);
+      for (const r of reviews) {
+        expect(r.author).toBeTruthy();
+        expect(r.rating).toBeGreaterThanOrEqual(1);
+        expect(r.rating).toBeLessThanOrEqual(5);
+        expect(r.title).toBeTruthy();
+        expect(r.body).toBeTruthy();
+      }
+    }
+  });
+
+  it("returns an empty array for an unknown id", () => {
+    expect(getReviews("nope")).toEqual([]);
   });
 });

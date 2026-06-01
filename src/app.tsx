@@ -4,19 +4,58 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { StrictMode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
+  CART_META_KEY,
   CATALOG,
   CATALOG_META_KEY,
-  createOrder,
   priceCart as priceCartLocal,
   type CartItemInput,
-  type Order,
   type PricedCart,
   type Product,
 } from "../catalog";
 import styles from "./app.module.css";
 
 type Insets = McpUiHostContext["safeAreaInsets"];
-type PriceCartFn = (items: CartItemInput[]) => Promise<PricedCart>;
+// Commit a staged selection to the cart.
+type AddToCartFn = (items: CartItemInput[]) => Promise<void>;
+// Hand off to checkout: opens the merchant page in the browser. Only available
+// inside a host with a link/open capability; undefined in standalone mode.
+type CheckoutFn = () => Promise<void>;
+
+// Minimal shape of ChatGPT's in-iframe bridge. ChatGPT injects `window.openai`
+// into skybridge widgets; the methods we use are optional-chained because the
+// surface evolves. (MCP hosts like Claude use the ext-apps bridge instead.)
+interface OpenAiBridge {
+  toolInput?: unknown;
+  toolOutput?: unknown;
+  callTool?: (name: string, params?: Record<string, unknown>) => Promise<unknown>;
+  openExternal?: (opts: { href: string }) => void | Promise<void>;
+  sendFollowUpMessage?: (opts: { prompt: string }) => void | Promise<void>;
+}
+declare global {
+  interface Window {
+    openai?: OpenAiBridge;
+  }
+}
+
+type HostMode = "chatgpt" | "mcp" | "standalone";
+
+// Pick the bridge: ChatGPT exposes window.openai; a top-level window (or the
+// ?standalone flag) means no host; otherwise we're embedded in an MCP host.
+function detectHost(): HostMode {
+  if (typeof window !== "undefined" && window.openai) return "chatgpt";
+  const params = new URLSearchParams(window.location.search);
+  if (params.has("standalone") || window.self === window.top) return "standalone";
+  return "mcp";
+}
+
+// callTool results may arrive as the raw structuredContent or wrapped in a
+// CallToolResult; normalize to the structured payload.
+function structuredOf(result: unknown): unknown {
+  if (result && typeof result === "object" && "structuredContent" in result) {
+    return (result as { structuredContent: unknown }).structuredContent;
+  }
+  return result;
+}
 
 function parseJsonContent<T>(result: CallToolResult): T | null {
   for (const block of result.content ?? []) {
@@ -53,141 +92,188 @@ function placeholderDataUri(p: Product): string {
   return `data:image/svg+xml,${encodeURIComponent(svg)}`;
 }
 
-// True when not embedded in an MCP host (opened directly via `npm run dev`).
-function isStandalone(): boolean {
-  const params = new URLSearchParams(window.location.search);
-  return params.has("standalone") || window.self === window.top;
+function emptyCart(): PricedCart {
+  return { lines: [], itemCount: 0, total: 0, currency: "USD", unknownIds: [] };
+}
+
+// Ambient context so the agent always knows the current cart (with ids) and how
+// to drive checkout. updateModelContext replaces prior context, so this stays
+// fresh without spamming the transcript.
+function cartContextMarkdown(cart: PricedCart): string {
+  if (cart.lines.length === 0) {
+    return "The product picker is open. The user's cart is currently empty.";
+  }
+  const lines = cart.lines
+    .map((l) => `- ${l.quantity}× ${l.name} (id: ${l.id}) — ${formatMoney(l.lineTotal, l.currency)}`)
+    .join("\n");
+  return `The user's current cart:
+
+${lines}
+
+Total: ${formatMoney(cart.total, cart.currency)} (${cart.itemCount} item(s)).
+
+Drive the experience in chat: confirm the cart and ask whether to add more or check out. Adjust items by id with add-to-cart / set-quantity / remove-from-cart. You CANNOT place orders or take payment — for checkout, call the checkout tool to get a link and share it; the user completes the purchase on the merchant page with their own account.`;
 }
 
 // ----- Host mode: connects to the MCP host bridge -----
 
 function HostApp() {
   const [products, setProducts] = useState<Product[]>([]);
+  const [cart, setCart] = useState<PricedCart>(emptyCart());
   const [insets, setInsets] = useState<Insets>();
+  const appRef = useRef<Parameters<NonNullable<Parameters<typeof useApp>[0]["onAppCreated"]>>[0] | null>(null);
+
+  const applyCart = useCallback((c: PricedCart) => {
+    setCart(c);
+    appRef.current
+      ?.updateModelContext({ content: [{ type: "text", text: cartContextMarkdown(c) }] })
+      .catch(console.error);
+  }, []);
 
   const { app, error } = useApp({
     appInfo: { name: "Product Picker", version: "1.0.0" },
     capabilities: {},
     onAppCreated: (app) => {
+      appRef.current = app;
+      // Fires for tool results the host routes to this open app — including
+      // add-to-cart / set-quantity / get-cart calls the AGENT made in chat.
+      // That keeps the cart badge in sync with chat-driven changes.
       app.ontoolresult = async (result) => {
-        const data = result._meta?.[CATALOG_META_KEY] as { products?: Product[] } | undefined;
-        if (data?.products) setProducts(data.products);
+        const catalog = result._meta?.[CATALOG_META_KEY] as { products?: Product[] } | undefined;
+        if (catalog?.products) setProducts(catalog.products);
+        const metaCart = result._meta?.[CART_META_KEY] as PricedCart | undefined;
+        if (metaCart && Array.isArray(metaCart.lines)) {
+          applyCart(metaCart);
+          return;
+        }
+        const parsed = parseJsonContent<PricedCart>(result);
+        if (parsed && Array.isArray(parsed.lines) && Array.isArray(parsed.unknownIds)) {
+          applyCart(parsed);
+        }
       };
       app.onhostcontextchanged = (params) => setInsets(params.safeAreaInsets);
       app.onerror = console.error;
     },
   });
 
-  const priceCart = useCallback<PriceCartFn>(
-    async (items) => {
-      const result = await app!.callServerTool({ name: "price-cart", arguments: { items } });
-      return parseJsonContent<PricedCart>(result) ?? emptyCart();
-    },
-    [app],
-  );
+  const addToCart = useCallback<AddToCartFn>(async (items) => {
+    if (!appRef.current || items.length === 0) return;
+    const result = await appRef.current.callServerTool({ name: "add-to-cart", arguments: { items } });
+    const parsed = parseJsonContent<PricedCart>(result);
+    if (parsed) applyCart(parsed);
+    // Brief, natural hand-off so the agent responds. The full cart (with ids) is
+    // already in model context via applyCart's updateModelContext, so the message
+    // itself doesn't need to itemize what was added.
+    await appRef.current.sendMessage({
+      role: "user",
+      content: [{ type: "text", text: "Added these to my cart." }],
+    });
+  }, [applyCart]);
 
-  const onPlaceOrder = useCallback(
-    async (cart: PricedCart): Promise<Order | null> => {
-      if (!app) return null;
-      const items = cart.lines.map((l) => ({ productId: l.id, quantity: l.quantity }));
-      const result = await app.callServerTool({ name: "place-order", arguments: { items } });
-      const order = parseJsonContent<Order>(result);
-      if (!order) return null;
-      await app.updateModelContext({
-        content: [{ type: "text", text: orderContextMarkdown(order) }],
-      });
-      await app.sendMessage({
-        role: "user",
-        content: [{ type: "text", text: "I've placed my order." }],
-      });
-      return order;
-    },
-    [app],
-  );
+  // Hand off to checkout: snapshot the cart into an order (server side) and open
+  // the returned merchant URL in the browser. The agent does not place the order
+  // or take payment — the user finishes on that page.
+  const checkout = useCallback<CheckoutFn>(async () => {
+    if (!appRef.current) return;
+    const result = await appRef.current.callServerTool({ name: "checkout", arguments: {} });
+    const parsed = parseJsonContent<{ checkoutUrl?: string }>(result);
+    if (parsed?.checkoutUrl) {
+      await appRef.current.openLink({ url: parsed.checkoutUrl });
+    }
+  }, []);
 
   if (error) return <div className={styles.status}><strong>Error:</strong> {error.message}</div>;
   if (!app) return <div className={styles.status}>Connecting…</div>;
 
-  return <Picker products={products} insets={insets} priceCart={priceCart} onPlaceOrder={onPlaceOrder} />;
+  return <Picker products={products} cart={cart} insets={insets} addToCart={addToCart} checkout={checkout} />;
+}
+
+// ----- ChatGPT mode: connects to the window.openai bridge -----
+// Same UI as host mode; only the bridge differs. callServerTool → callTool,
+// openLink → openExternal, sendMessage → sendFollowUpMessage, and tool results
+// arrive via window.openai.toolOutput (refreshed on the openai:set_globals event)
+// instead of ontoolresult.
+
+function ChatGptApp() {
+  const oai = window.openai!;
+  const [products, setProducts] = useState<Product[]>(CATALOG);
+  const [cart, setCart] = useState<PricedCart>(emptyCart());
+
+  // browse-products yields { products, cart }; cart tools yield a PricedCart.
+  const applyToolOutput = useCallback((output: unknown) => {
+    if (!output || typeof output !== "object") return;
+    const o = output as Record<string, unknown>;
+    if (Array.isArray(o.products)) setProducts(o.products as Product[]);
+    const maybeCart = (o.cart ?? o) as PricedCart;
+    if (Array.isArray(maybeCart.lines)) setCart(maybeCart);
+  }, []);
+
+  useEffect(() => {
+    applyToolOutput(window.openai?.toolOutput);
+    const onGlobals = () => applyToolOutput(window.openai?.toolOutput);
+    window.addEventListener("openai:set_globals", onGlobals);
+    return () => window.removeEventListener("openai:set_globals", onGlobals);
+  }, [applyToolOutput]);
+
+  const addToCart = useCallback<AddToCartFn>(async (items) => {
+    if (items.length === 0) return;
+    const result = await oai.callTool?.("add-to-cart", { items });
+    applyToolOutput(structuredOf(result));
+    await oai.sendFollowUpMessage?.({ prompt: "Added these to my cart." });
+  }, [oai, applyToolOutput]);
+
+  const checkout = useCallback<CheckoutFn>(async () => {
+    const result = await oai.callTool?.("checkout", {});
+    const url = (structuredOf(result) as { checkoutUrl?: string } | undefined)?.checkoutUrl;
+    if (url) await oai.openExternal?.({ href: url });
+  }, [oai]);
+
+  return <Picker products={products} cart={cart} addToCart={addToCart} checkout={checkout} />;
 }
 
 // ----- Standalone mode: runs in a plain browser with the local catalog -----
+// No agent here, so "Add to cart" just accumulates a local cart for the badge.
+// Checkout is agent-driven and only available inside an MCP host.
 
 function StandaloneApp() {
-  const priceCart = useCallback<PriceCartFn>(async (items) => priceCartLocal(items), []);
-  const onPlaceOrder = useCallback(async (cart: PricedCart): Promise<Order | null> => {
-    const items = cart.lines.map((l) => ({ productId: l.id, quantity: l.quantity }));
-    return createOrder(items, "ORD-LOCAL");
+  const [cart, setCart] = useState<PricedCart>(emptyCart());
+  const qtys = useRef(new Map<string, number>());
+
+  const addToCart = useCallback<AddToCartFn>(async (items) => {
+    for (const { productId, quantity } of items) {
+      if (quantity <= 0) continue;
+      qtys.current.set(productId, (qtys.current.get(productId) ?? 0) + quantity);
+    }
+    const all = [...qtys.current.entries()].map(([productId, quantity]) => ({ productId, quantity }));
+    setCart(priceCartLocal(all));
   }, []);
-  return <Picker products={CATALOG} priceCart={priceCart} onPlaceOrder={onPlaceOrder} />;
+
+  return <Picker products={CATALOG} cart={cart} addToCart={addToCart} />;
 }
 
-function emptyCart(): PricedCart {
-  return { lines: [], itemCount: 0, total: 0, currency: "USD", unknownIds: [] };
-}
-
-function orderContextMarkdown(order: Order): string {
-  const lines = order.lines
-    .map((l) => `- ${l.quantity}× ${l.name} — ${formatMoney(l.lineTotal, l.currency)}`)
-    .join("\n");
-  return `---
-order-id: ${order.id}
-status: ${order.status}
-item-count: ${order.itemCount}
-total: ${formatMoney(order.total, order.currency)}
----
-
-The user placed order ${order.id} with ${order.itemCount} item(s):
-
-${lines}`;
-}
-
-// ----- Shared cart UI -----
+// ----- Selection UI (the only thing that lives in the iframe) -----
 
 interface PickerProps {
   products: Product[];
+  cart: PricedCart;
   insets?: Insets;
-  priceCart: PriceCartFn;
-  onPlaceOrder: (cart: PricedCart) => Promise<Order | null>;
+  addToCart: AddToCartFn;
+  checkout?: CheckoutFn;
 }
 
-function Picker({ products, insets, priceCart, onPlaceOrder }: PickerProps) {
-  const [quantities, setQuantities] = useState<Map<string, number>>(new Map());
-  const [cart, setCart] = useState<PricedCart>(emptyCart());
-  const [pricing, setPricing] = useState(false);
+function Picker({ products, cart, insets, addToCart, checkout }: PickerProps) {
+  // Staged selection (not yet in the cart). Cleared after "Add to cart".
+  const [selection, setSelection] = useState<Map<string, number>>(new Map());
   const [submitting, setSubmitting] = useState(false);
-  const [placedOrder, setPlacedOrder] = useState<Order | null>(null);
-  const reqId = useRef(0);
+  const [checkingOut, setCheckingOut] = useState(false);
 
-  const items = useMemo<CartItemInput[]>(
-    () =>
-      [...quantities.entries()]
-        .filter(([, q]) => q > 0)
-        .map(([productId, quantity]) => ({ productId, quantity })),
-    [quantities],
+  const selectedCount = useMemo(
+    () => [...selection.values()].reduce((sum, q) => sum + q, 0),
+    [selection],
   );
 
-  // Recompute the cart total server-side whenever the quantities change.
-  useEffect(() => {
-    if (items.length === 0) {
-      setCart(emptyCart());
-      setPricing(false);
-      return;
-    }
-    const myReq = ++reqId.current;
-    setPricing(true);
-    priceCart(items)
-      .then((priced) => {
-        if (myReq === reqId.current) setCart(priced);
-      })
-      .catch(console.error)
-      .finally(() => {
-        if (myReq === reqId.current) setPricing(false);
-      });
-  }, [items, priceCart]);
-
   const setQty = useCallback((id: string, qty: number) => {
-    setQuantities((prev) => {
+    setSelection((prev) => {
       const next = new Map(prev);
       if (qty <= 0) next.delete(id);
       else next.set(id, qty);
@@ -195,23 +281,31 @@ function Picker({ products, insets, priceCart, onPlaceOrder }: PickerProps) {
     });
   }, []);
 
-  const handlePlaceOrder = useCallback(async () => {
-    if (cart.itemCount === 0) return;
+  const handleAdd = useCallback(async () => {
+    if (selectedCount === 0) return;
+    const items = [...selection.entries()].map(([productId, quantity]) => ({ productId, quantity }));
     setSubmitting(true);
     try {
-      const order = await onPlaceOrder(cart);
-      if (order) setPlacedOrder(order);
+      await addToCart(items);
+      setSelection(new Map());
     } catch (e) {
       console.error(e);
     } finally {
       setSubmitting(false);
     }
-  }, [cart, onPlaceOrder]);
+  }, [selection, selectedCount, addToCart]);
 
-  const startNewOrder = useCallback(() => {
-    setPlacedOrder(null);
-    setQuantities(new Map());
-  }, []);
+  const handleCheckout = useCallback(async () => {
+    if (!checkout || cart.itemCount === 0) return;
+    setCheckingOut(true);
+    try {
+      await checkout();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setCheckingOut(false);
+    }
+  }, [checkout, cart.itemCount]);
 
   const mainStyle = useMemo(
     () => ({
@@ -223,37 +317,6 @@ function Picker({ products, insets, priceCart, onPlaceOrder }: PickerProps) {
     [insets],
   );
 
-  if (placedOrder) {
-    return (
-      <main className={styles.main} style={mainStyle}>
-        <div className={styles.confirmation} role="status" aria-live="polite">
-          <div className={styles.confirmHeader}>
-            <span className={styles.confirmTitle}>Order placed</span>
-            <span className={styles.statusBadge}>{placedOrder.status}</span>
-          </div>
-          <div className={styles.orderId}>{placedOrder.id}</div>
-          <ul className={styles.orderLines}>
-            {placedOrder.lines.map((l) => (
-              <li key={l.id} className={styles.orderLine}>
-                <span>
-                  {l.quantity}× {l.name}
-                </span>
-                <span>{formatMoney(l.lineTotal, l.currency)}</span>
-              </li>
-            ))}
-          </ul>
-          <div className={styles.orderTotal}>
-            <span>Total</span>
-            <span>{formatMoney(placedOrder.total, placedOrder.currency)}</span>
-          </div>
-          <button className={styles.confirm} onClick={startNewOrder}>
-            Start new order
-          </button>
-        </div>
-      </main>
-    );
-  }
-
   return (
     <main className={styles.main} style={mainStyle}>
       {products.length === 0 ? (
@@ -261,7 +324,7 @@ function Picker({ products, insets, priceCart, onPlaceOrder }: PickerProps) {
       ) : (
         <div className={styles.grid}>
           {products.map((p) => {
-            const qty = quantities.get(p.id) ?? 0;
+            const qty = selection.get(p.id) ?? 0;
             return (
               <div key={p.id} className={`${styles.card} ${qty > 0 ? styles.cardSelected : ""}`}>
                 <img
@@ -312,21 +375,41 @@ function Picker({ products, insets, priceCart, onPlaceOrder }: PickerProps) {
 
       <div className={styles.footer}>
         <span className={styles.summary}>
-          {cart.itemCount} item(s) · {formatMoney(cart.total, cart.currency)}
-          {pricing ? " · updating…" : ""}
+          {cart.itemCount > 0
+            ? `🛒 ${cart.itemCount} in cart · ${formatMoney(cart.total, cart.currency)}`
+            : "🛒 Cart is empty"}
         </span>
         <button
           className={styles.confirm}
-          disabled={cart.itemCount === 0 || submitting || pricing}
-          onClick={handlePlaceOrder}
+          disabled={selectedCount === 0 || submitting}
+          onClick={handleAdd}
         >
-          {submitting ? "Placing…" : "Place order"}
+          {submitting
+            ? "Adding…"
+            : selectedCount === 0
+              ? "Select items to add"
+              : `Add ${selectedCount} item${selectedCount === 1 ? "" : "s"} to cart`}
         </button>
+        {checkout && cart.itemCount > 0 && (
+          <button
+            className={styles.checkout}
+            disabled={checkingOut}
+            onClick={handleCheckout}
+          >
+            {checkingOut ? "Opening…" : "Checkout"}
+          </button>
+        )}
       </div>
     </main>
   );
 }
 
+const HOST_MODE = detectHost();
+const Root =
+  HOST_MODE === "chatgpt" ? ChatGptApp : HOST_MODE === "standalone" ? StandaloneApp : HostApp;
+
 createRoot(document.getElementById("root")!).render(
-  <StrictMode>{isStandalone() ? <StandaloneApp /> : <HostApp />}</StrictMode>,
+  <StrictMode>
+    <Root />
+  </StrictMode>,
 );
