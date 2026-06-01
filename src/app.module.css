@@ -148,23 +148,6 @@
   font-size: 13px;
 }
 
-.confirm {
-  appearance: none;
-  border: none;
-  border-radius: 8px;
-  padding: 10px 16px;
-  font-size: 14px;
-  font-weight: 600;
-  color: #ffffff;
-  background: #4f7cff;
-  cursor: pointer;
-}
-
-.confirm:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
-
 .checkout {
   appearance: none;
   border: none;
