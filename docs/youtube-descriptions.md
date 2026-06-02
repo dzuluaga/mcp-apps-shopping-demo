@@ -135,3 +135,59 @@ https://mcp-apps-nine.vercel.app/mcp
 Source: https://github.com/dzuluaga/mcp-apps-shopping-demo
 
 #ChatGPT #MCP #AP2 #AgenticCommerce #DigitalCredentials #OpenID4VP #AIAgents #OpenAI #AgenticAI
+
+## Claude Code (terminal) — passkey checkout (live demo)
+
+URL: https://youtu.be/5MXRkNJF824
+
+### Title
+Agentic Checkout from the Terminal — Claude Code + Passkey Authorization (MCP)
+
+### Description
+Agentic commerce isn't just a chat-app thing. Here the shopping + payment MCP server runs inside Claude Code — Anthropic's terminal coding agent. You add the connector to the CLI, then shop and check out without leaving the terminal.
+
+Claude Code drives the cart conversationally and calls the checkout tool, but it never takes payment. Checkout hands off to a merchant page where Authorize payment runs a real WebAuthn passkey ceremony (Touch ID / device passkey) — the "is it really you?" proof of user presence. Control returns to the terminal once you've authorized. Nothing is charged.
+
+In this clip:
+• Add the MCP server to Claude Code as an HTTP connector
+• Browse and edit the cart from the terminal
+• checkout returns a hand-off link — the agent never pays
+• Passkey (WebAuthn) user-presence authorization on the merchant page
+• Authorization confirmed back in the terminal
+
+The point: a terminal coding agent can run the full agentic-commerce flow, with the authorization step staying on a user-held passkey — not asserted by the agent.
+
+Add it to Claude Code:
+claude mcp add --transport http product-picker https://mcp-apps-nine.vercel.app/mcp
+
+Source: https://github.com/dzuluaga/mcp-apps-shopping-demo
+
+#ClaudeCode #MCP #Passkey #WebAuthn #AgenticCommerce #AIAgents #Anthropic #AgenticAI #FIDO
+
+## Claude Code (terminal) — Digital Payment Credentials + AP2 (live demo)
+
+URL: https://youtu.be/GmYu-4M5unY
+
+### Title
+Digital Payment Credentials + AP2 in the Terminal — Claude Code MCP Checkout
+
+### Description
+Where the passkey flow proves who you are, this one proves what you approved. The Digital Payment Credential / AP2 checkout — running inside Claude Code, Anthropic's terminal coding agent. Same MCP server, no GUI: add the connector to the CLI and take a purchase all the way to a cryptographically bound payment authorization.
+
+Claude Code builds the cart and calls checkout, then hands off to a merchant page. Payment is authorized with a Digital Payment Credential presented via the Digital Credentials API / OpenID4VP, cross-device over FIDO caBLE: the desktop shows a QR, your phone's wallet scans it and signs a transaction_data_hash that binds the exact amount and payee. The server re-derives that hash and assembles an AP2 Checkout + Payment Mandate, running four deterministic gates — it never trusts a "verified" flag.
+
+In this clip:
+• Add the MCP server to Claude Code as an HTTP connector
+• Shop and check out entirely from the terminal
+• Cross-device authorization via the Digital Credentials API (phone wallet, FIDO caBLE)
+• Wallet cryptographically signs amount + payee — not just user presence
+• Server produces an AP2 Payment Mandate + 4 gates: Amount binding, Authorization present, Credential not expired, Subject binding
+
+Why it matters: the amount you saw is the amount that was signed — and it works from a terminal agent, proving this isn't tied to any one chat surface. No real money; mock merchant, self-signed reader.
+
+Add it to Claude Code:
+claude mcp add --transport http product-picker https://mcp-apps-nine.vercel.app/mcp
+
+Source: https://github.com/dzuluaga/mcp-apps-shopping-demo
+
+#ClaudeCode #MCP #AP2 #DigitalCredentials #OpenID4VP #AgenticCommerce #FIDO #AIAgents #Anthropic
