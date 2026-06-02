@@ -3,14 +3,14 @@
 <table>
 <tr>
 <td align="center" width="33%">
-<a href="https://youtube.com/shorts/YiNzjIVcGOA">
-<img src="https://img.youtube.com/vi/YiNzjIVcGOA/hqdefault.jpg" width="280" alt="Demo: Product Picker in the Claude native app"><br>
+<a href="https://youtube.com/shorts/JA91c2d2DhQ">
+<img src="https://img.youtube.com/vi/JA91c2d2DhQ/hqdefault.jpg" width="280" alt="Demo: Product Picker in the Claude native app"><br>
 ▶︎ Claude native app
 </a>
 </td>
 <td align="center" width="33%">
-<a href="https://youtube.com/shorts/M-Vw3rCxNK0">
-<img src="https://img.youtube.com/vi/M-Vw3rCxNK0/hqdefault.jpg" width="280" alt="Demo: Product Picker in ChatGPT"><br>
+<a href="https://youtube.com/shorts/8rMx5P1AOgI">
+<img src="https://img.youtube.com/vi/8rMx5P1AOgI/hqdefault.jpg" width="280" alt="Demo: Product Picker in ChatGPT"><br>
 ▶︎ ChatGPT
 </a>
 </td>
@@ -66,8 +66,8 @@ page is a mock (no real charge).
 
 See it running end to end (browse → edit cart → checkout hand-off):
 
-- **Claude native app:** <https://youtube.com/shorts/YiNzjIVcGOA>
-- **ChatGPT:** <https://youtube.com/shorts/M-Vw3rCxNK0>
+- **Claude native app:** <https://youtube.com/shorts/JA91c2d2DhQ>
+- **ChatGPT:** <https://youtube.com/shorts/8rMx5P1AOgI>
 - **Claude desktop (claude.ai):** <https://youtu.be/MDlyOMIAgYg>
 
 ## Try the hosted demo
