@@ -179,7 +179,11 @@ Drive the experience in chat: confirm the cart and ask whether to add more or ch
 // ----- Host mode: connects to the MCP host bridge -----
 
 function HostApp() {
-  const [products, setProducts] = useState<Product[]>([]);
+  // Seed with the bundled catalog so a widget opened by a cart-only tool (e.g.
+  // get-cart, which doesn't carry the catalog) renders products immediately
+  // instead of getting stuck on "Loading products…". browse-products' _meta
+  // overwrites this with the same static list.
+  const [products, setProducts] = useState<Product[]>(CATALOG);
   const [cart, setCart] = useState<PricedCart>(emptyCart());
   const [insets, setInsets] = useState<Insets>();
   const appRef = useRef<Parameters<NonNullable<Parameters<typeof useApp>[0]["onAppCreated"]>>[0] | null>(null);
