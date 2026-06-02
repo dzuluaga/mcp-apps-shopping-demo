@@ -21,6 +21,20 @@
 </a>
 </td>
 </tr>
+<tr>
+<td align="center" width="33%">
+<a href="https://youtu.be/5MXRkNJF824">
+<img src="https://img.youtube.com/vi/5MXRkNJF824/hqdefault.jpg" width="280" alt="Demo: Product Picker in Claude Code (terminal), with passkey payment authorization"><br>
+▶︎ Claude Code + passkey checkout
+</a>
+</td>
+<td align="center" width="33%">
+<a href="https://youtu.be/GmYu-4M5unY">
+<img src="https://img.youtube.com/vi/GmYu-4M5unY/hqdefault.jpg" width="280" alt="Demo: Product Picker in Claude Code (terminal), with Digital Payment Credentials and AP2 checkout"><br>
+▶︎ Claude Code + AP2 checkout
+</a>
+</td>
+</tr>
 </table>
 
 An **agentic** shopping app for Claude Desktop. The embedded UI is deliberately
@@ -69,6 +83,8 @@ See it running end to end (browse → edit cart → checkout hand-off):
 - **Claude native app:** <https://youtube.com/shorts/JA91c2d2DhQ>
 - **ChatGPT:** <https://youtube.com/shorts/8rMx5P1AOgI>
 - **Claude desktop (claude.ai):** <https://youtu.be/MDlyOMIAgYg>
+- **Claude Code (terminal) — passkey checkout:** <https://youtu.be/5MXRkNJF824>
+- **Claude Code (terminal) — Digital Payment Credentials + AP2:** <https://youtu.be/GmYu-4M5unY>
 
 ## Try the hosted demo
 
