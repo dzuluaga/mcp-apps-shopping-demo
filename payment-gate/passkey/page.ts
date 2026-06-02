@@ -92,10 +92,10 @@ export function renderPasskeyPage(args: { order: Order; orderToken: string; cros
       const el = document.getElementById("receipt");
       const gates = out.gates.map((g) => '<div class="gate ' + (g.pass ? "pass" : "fail") + '">' + (g.pass ? "✓" : "✗") + " " + g.gate + " — " + g.detail + "</div>").join("");
       const done = out.completed
-        ? "<div style=\\"margin-top:0.85rem;padding-top:0.7rem;border-top:1px solid #cdeccd;font-size:0.95rem;font-weight:600;color:#0a7f2e;\\">Purchase complete — you can close this page and return to the chat.</div>"
+        ? "<div style=\\"background:#0a7f2e;color:#fff;font-size:1.1rem;font-weight:700;line-height:1.4;padding:1rem 1.1rem;border-radius:8px;margin-bottom:1rem;text-align:center;\\">✓ Purchase complete<div style=\\"font-size:0.9rem;font-weight:500;margin-top:0.25rem;\\">You can close this page and return to the chat.</div></div>"
         : "";
-      el.innerHTML = "<div style=\\"font-weight:600;color:#0a7f2e;\\">✓ Payment Mandate authorized</div>" +
-        "<div style=\\"font-size:0.8rem;color:#666;margin:0.3rem 0 0.6rem;\\">" + out.mandate.id + "</div>" + gates + done;
+      el.innerHTML = done + "<div style=\\"font-weight:600;color:#0a7f2e;\\">✓ Payment Mandate authorized</div>" +
+        "<div style=\\"font-size:0.8rem;color:#666;margin:0.3rem 0 0.6rem;\\">" + out.mandate.id + "</div>" + gates;
       el.style.display = "block";
       if (out.completed) btn.textContent = "Authorized ✓";
     }
