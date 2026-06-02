@@ -161,8 +161,11 @@ export function createServer(): McpServer {
               `2. Adjust the cart by id with add-to-cart, set-quantity, and remove-from-cart; read it with get-cart.\n` +
               `3. To check out, call checkout to get a checkout link and share it with the user — do not try to ` +
               `pay or confirm the order yourself.\n` +
-              `4. After the user authorizes on that page, call get-order-status to confirm the purchase and report ` +
-              `the details; a cleared cart (get-cart empty) is a second signal it completed.\n` +
+              `4. When the user returns from the checkout page (e.g. says they paid/finished), call get-order-status. ` +
+              `If it returns a completed order, confirm it to the user: state the order ID and the total amount charged, ` +
+              `and tell them their items are on the way. If it says none is complete yet, the user hasn't finished — ` +
+              `invite them to complete authorization on the checkout page. A cleared cart (get-cart empty) is a second ` +
+              `signal it completed.\n` +
               `Use get-product-details and get-product-reviews to answer questions about items.`,
           },
         ],
@@ -350,8 +353,9 @@ export function createServer(): McpServer {
       title: "Get Order Status",
       description:
         "Check whether the user has completed a purchase on the checkout/payment page. Returns the most " +
-        "recent completed order — amount, payment instrument, and the authorization gate results — or a note " +
-        "that none is complete yet. Call this after handing off to checkout to confirm the purchase went through.",
+        "recent completed order — order ID, amount, currency, payment instrument, and the authorization gate " +
+        "results — or a note that none is complete yet. Call this after handing off to checkout to confirm the " +
+        "purchase went through; on success, confirm the order ID and total to the user and tell them their items are on the way.",
       inputSchema: {},
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
