@@ -3,8 +3,9 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import cors from "cors";
 import type { Express, Request, Response } from "express";
 import { createServer } from "./server.js";
-import { checkoutResponse, setCheckoutBaseUrl } from "./checkout.js";
+import { checkoutResponse, demoCompletedOrder, setCheckoutBaseUrl } from "./checkout.js";
 import { orderStore } from "./orderStore.js";
+import { cartStore } from "./cartStore.js";
 import { registerPasskeyGate } from "./payment-gate/passkey/routes.js";
 import { registerDcPaymentGate } from "./payment-gate/dc-payment/routes.js";
 
@@ -34,6 +35,22 @@ export function createApp({ publicBaseUrl, allowedHosts }: AppOptions): Express 
     const order = await orderStore.read();
     const completed = !!order && (!orderId || order.orderId === orderId);
     res.json({ completed, order: completed ? order : null });
+  });
+
+  // Instant-demo completion: the checkout page's "Place order" button POSTs the
+  // order token here. We record a demo CompletedOrder (no device authorization)
+  // and clear the cart, mirroring what the payment gates do on success. The
+  // embedded widget's order-status poll then sees completion and confirms in chat.
+  app.post("/checkout/place-order", async (req: Request, res: Response) => {
+    const token = typeof req.body?.order === "string" ? req.body.order : undefined;
+    const order = token ? demoCompletedOrder(token) : null;
+    if (!order) {
+      res.status(400).json({ ok: false, error: "Invalid or missing order token." });
+      return;
+    }
+    await orderStore.write(order);
+    await cartStore.write(new Map());
+    res.json({ ok: true, orderId: order.orderId });
   });
 
   app.all("/mcp", async (req: Request, res: Response) => {

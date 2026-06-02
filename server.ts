@@ -7,6 +7,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult, ReadResourceResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import fs from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import {
   CART_META_KEY,
@@ -17,7 +19,7 @@ import {
   priceCart,
   type PricedCart,
 } from "./catalog.js";
-import { createCheckoutOrder } from "./checkout.js";
+import { createCheckoutOrder, getCheckoutBaseUrl } from "./checkout.js";
 import { cartStore } from "./cartStore.js";
 import { orderStore } from "./orderStore.js";
 
@@ -27,12 +29,35 @@ const DIST_DIR = import.meta.filename.endsWith(".ts")
   ? path.join(import.meta.dirname, "dist")
   : import.meta.dirname;
 
+// Hosts (Claude Desktop especially) cache the UI resource by its URI and never
+// re-fetch while the URI is unchanged — so a redeploy with a new bundle keeps
+// serving the stale widget. Stamp the URI with a short hash of the bundle's
+// contents so it changes exactly when the bundle changes, forcing a fresh fetch
+// after each meaningful deploy. Computed once at module load (cold start), not
+// per request. Falls back to "dev" if the bundle isn't on disk yet.
+function bundleVersion(): string {
+  const candidates = [
+    path.join(DIST_DIR, "mcp-app.html"),
+    path.join(process.cwd(), "dist", "mcp-app.html"),
+  ];
+  for (const candidate of candidates) {
+    try {
+      return createHash("sha256").update(readFileSync(candidate)).digest("hex").slice(0, 8);
+    } catch {
+      // try next candidate
+    }
+  }
+  return "dev";
+}
+
+const BUNDLE_VERSION = bundleVersion();
+
 // The UI bundle is served twice from the same HTML so one server works in both
 // hosts: MCP hosts (Claude) read RESOURCE_URI via _meta.ui.resourceUri; ChatGPT
 // reads SKYBRIDGE_URI via _meta["openai/outputTemplate"] and needs the skybridge
 // mime. The bundle detects the host at runtime (see src/app.tsx).
-const RESOURCE_URI = "ui://product-picker/mcp-app.html";
-const SKYBRIDGE_URI = "ui://product-picker/mcp-app.skybridge.html";
+export const RESOURCE_URI = `ui://product-picker/mcp-app-${BUNDLE_VERSION}.html`;
+export const SKYBRIDGE_URI = `ui://product-picker/mcp-app-${BUNDLE_VERSION}.skybridge.html`;
 const SKYBRIDGE_MIME = "text/html+skybridge";
 
 // Domains the iframe needs to load product images (picsum redirects to fastly).
@@ -406,7 +431,15 @@ export function createServer(): McpServer {
           uri: RESOURCE_URI,
           mimeType: RESOURCE_MIME_TYPE,
           text: await loadBundle(),
-          _meta: { ui: { csp: { resourceDomains: IMAGE_DOMAINS } } },
+          // resourceDomains covers images (img-src). connectDomains is separate
+          // and maps to connect-src: without it the widget's order-status poll
+          // fetch to our own origin is blocked, so checkout completion never
+          // reaches the chat. Allowlist exactly the checkout origin we hand out.
+          _meta: {
+            ui: {
+              csp: { resourceDomains: IMAGE_DOMAINS, connectDomains: [getCheckoutBaseUrl()] },
+            },
+          },
         },
       ],
     }),
@@ -427,7 +460,7 @@ export function createServer(): McpServer {
           text: await loadBundle(),
           _meta: {
             "openai/widgetCSP": {
-              connect_domains: [],
+              connect_domains: [getCheckoutBaseUrl()],
               resource_domains: IMAGE_DOMAINS,
             },
           },

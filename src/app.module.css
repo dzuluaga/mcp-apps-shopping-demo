@@ -11,6 +11,49 @@
   opacity: 0.8;
 }
 
+.confirmation {
+  margin: 0 16px 12px;
+  padding: 14px 16px;
+  border: 1px solid light-dark(#bfe3c8, #2f5d3a);
+  border-radius: 12px;
+  background: light-dark(#f1faf3, #16291c);
+}
+
+.confirmHeader {
+  font-size: 14px;
+  font-weight: 600;
+  color: light-dark(#1a7f37, #4ec46f);
+  margin-bottom: 10px;
+}
+
+.confirmFields {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.confirmRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.confirmRow dt {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.6;
+}
+
+.confirmRow dd {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));

@@ -1,6 +1,7 @@
 import http from "node:http";
 import { randomBytes } from "node:crypto";
 import { createOrder, type CartItemInput, type Order } from "./catalog.js";
+import type { CompletedOrder } from "./orderStore.js";
 
 // Base URL the checkout link points at. Falls back to localhost for local runs;
 // on Vercel it derives from the project's production domain so the link resolves
@@ -18,6 +19,13 @@ let checkoutBaseUrl = defaultBaseUrl();
 // Point the checkout link at a specific origin (trailing slashes trimmed).
 export function setCheckoutBaseUrl(url: string): void {
   checkoutBaseUrl = url.replace(/\/+$/, "");
+}
+
+// The origin the checkout link (and the widget's order-status poll) target.
+// The embedded widget must list this in its CSP connect-src or the poll's
+// fetch is blocked, so the UI resource derives connectDomains from it.
+export function getCheckoutBaseUrl(): string {
+  return checkoutBaseUrl;
 }
 
 // Random, no persistent counter (a counter cannot survive across serverless
@@ -58,6 +66,24 @@ export function createCheckoutOrder(items: CartItemInput[]): { orderId: string; 
   const order = createOrder(items, nextOrderId());
   const token = encodeOrder(order);
   return { orderId: order.id, checkoutUrl: `${checkoutBaseUrl}/checkout?order=${token}` };
+}
+
+// Build a completed-order record for the instant-demo path (no device prompt).
+// Mirrors what the payment gates write on success so the agent's confirmation
+// poll sees the same shape, but marks the method/gates as a demo.
+export function demoCompletedOrder(token: string): CompletedOrder | null {
+  const order = decodeOrder(token);
+  if (!order) return null;
+  return {
+    orderId: order.id,
+    mandateId: `demo_${order.id}`,
+    amount: order.total,
+    currency: order.currency,
+    method: "instant-demo",
+    instrument: { issuer: "demo", maskedAccount: null, holder: null },
+    gates: [{ gate: "Instant demo", pass: true, detail: "Device authorization skipped (demo)" }],
+    completedAt: new Date().toISOString(),
+  };
 }
 
 function formatMoney(amount: number, currency: string): string {
@@ -122,9 +148,22 @@ function renderCheckoutPage(order: Order, token: string): string {
   <button id="place">Place order (instant demo)</button>
   <div class="note">Skips the device prompt — no real charge.</div>
   <script>
-    document.getElementById('place').addEventListener('click', function () {
+    document.getElementById('place').addEventListener('click', async function () {
       this.disabled = true;
-      this.textContent = 'Order placed ✓ (demo)';
+      this.textContent = 'Placing order…';
+      try {
+        const res = await fetch('/checkout/place-order', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ order: ${JSON.stringify(token)} }),
+        });
+        if (!res.ok) throw new Error('place-order failed: ' + res.status);
+        this.textContent = 'Order placed ✓ (demo)';
+      } catch (e) {
+        this.disabled = false;
+        this.textContent = 'Place order (instant demo)';
+        alert('Could not place the order. Please try again.');
+      }
     });
   </script>
 </body>
