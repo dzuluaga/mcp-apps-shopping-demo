@@ -43,11 +43,15 @@
 </tr>
 </table>
 
-An **agentic** shopping app for Claude Desktop. The embedded UI is deliberately
+An **agentic** shopping app built as **one MCP server that runs on every
+surface** — the Claude native app, Claude on the web (claude.ai), Claude
+Desktop, ChatGPT, Goose, and even Claude Code in the terminal. One server, one
+UI bundle: each host renders the same widget natively (or, in a no-GUI host like
+Claude Code, drives the whole flow from chat). The embedded UI is deliberately
 small — it's just the visual part that benefits from being a widget: browse the
 product grid and adjust quantities right on each card. Everything else
-(confirming, asking about products, checkout) is driven by **Claude in chat**,
-not by the iframe.
+(confirming, asking about products, checkout) is driven by **the agent in
+chat**, not by the iframe.
 
 This mirrors how real Claude/Gemini commerce connectors work: the agent builds
 and edits the cart conversationally but **does not place orders or take
@@ -71,16 +75,24 @@ page.
    two keyboards"), inspect the cart ("what's in my cart?"), or ask about
    products ("what do people say about the monitor?"). Claude uses tools to
    adjust the shared cart and answer.
-4. **Checkout hand-off** — click **Checkout** in the widget (or ask Claude to
-   check out). Claude calls the `checkout` tool, which snapshots the cart into
-   an order and returns a link to the mock merchant page. The page opens in your
-   browser; you complete the (simulated) purchase there.
+4. **Checkout hand-off** — click **Checkout** in the widget (or ask the agent to
+   check out). The agent calls the `checkout` tool, which snapshots the cart into
+   an order and returns a link to the mock merchant page — it never places the
+   order or takes payment itself. The page opens in your browser, where
+   **Authorize payment** runs a real authorization ceremony. Two variants are
+   demoed: a **passkey** (WebAuthn / Touch ID) user-presence proof, and a
+   cross-device **Digital Payment Credentials / AP2** flow where your phone's
+   wallet signs the exact cart total via OpenID4VP (carried phone↔desktop over
+   FIDO caBLE) to produce an AP2 Payment Mandate. Nothing is charged.
 
 The UI and the agent share one server-side cart, so anything Claude changes is
 reflected in the picker's cart badge, and anything you add in the picker shows
 up in chat. The cart is kept in-memory locally (lost on server restart); orders
 carry no server state — they're encoded into the checkout link. The checkout
-page is a mock (no real charge).
+page is a mock (no real charge), but the **Authorize payment** step on it is a
+real ceremony — passkey user-presence, or the cross-device, amount-bound Digital
+Payment Credentials / AP2 variant where the wallet signs over the exact cart
+total.
 
 ## Demo
 
@@ -106,6 +118,14 @@ try it **without building or deploying anything**.
    cards, then click **Checkout** (or ask Claude) to open the mock merchant page.
 2. **ChatGPT**: enable **developer mode**, then add a custom connector/app using
    the same URL.
+3. **Claude Code (terminal)**: add it as a streamable-HTTP server, then shop and
+   check out without leaving the terminal:
+
+   ```bash
+   claude mcp add --transport http product-picker https://mcp-apps-nine.vercel.app/mcp
+   ```
+4. **Goose** (or any other MCP host): add it as a streamable-HTTP/remote MCP
+   server pointed at the same `/mcp` URL.
 
 Just want to see the UI? Open the standalone browser preview — no host required:
 <https://mcp-apps-nine.vercel.app/mcp-app.html> (loads the sample catalog
