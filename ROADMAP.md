@@ -14,9 +14,11 @@ Planned work for the Product Picker MCP app. Status reflects intent, not a commi
     added on web; check stepper touch targets and the checkout hand-off browser.
   - [x] **ChatGPT mobile web** (chatgpt.com in a phone browser) — check the
     responsive iframe reflow and whether `window.openai` is present.
-- [ ] **Incorporate the FIDO caBLE cross-device channel.** Add a
-  "The cross-device channel (FIDO caBLE)" feature/section — integrate FIDO caBLE
+- [x] **Incorporate the FIDO caBLE cross-device channel.** Added a
+  "The cross-device channel (FIDO caBLE)" feature/section — integrated FIDO caBLE
   (cloud-assisted BLE) into the checkout hand-off flow.
+  - [x] Passkey gate (same-device + cross-device caBLE) — `payment-gate/passkey/`.
+  - [x] DC payment gate (cross-device caBLE, amount-bound) — `payment-gate/dc-payment/`.
 
 ## Demo & docs
 

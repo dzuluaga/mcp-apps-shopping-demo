@@ -7,6 +7,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult, ReadResourceResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import fs from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import {
   CART_META_KEY,
@@ -17,8 +19,9 @@ import {
   priceCart,
   type PricedCart,
 } from "./catalog.js";
-import { createCheckoutOrder } from "./checkout.js";
+import { createCheckoutOrder, getCheckoutBaseUrl } from "./checkout.js";
 import { cartStore } from "./cartStore.js";
+import { orderStore } from "./orderStore.js";
 
 // Resolve the bundled UI relative to this module, working from both
 // source (server.ts) and compiled (dist/server.js).
@@ -26,12 +29,35 @@ const DIST_DIR = import.meta.filename.endsWith(".ts")
   ? path.join(import.meta.dirname, "dist")
   : import.meta.dirname;
 
+// Hosts (Claude Desktop especially) cache the UI resource by its URI and never
+// re-fetch while the URI is unchanged — so a redeploy with a new bundle keeps
+// serving the stale widget. Stamp the URI with a short hash of the bundle's
+// contents so it changes exactly when the bundle changes, forcing a fresh fetch
+// after each meaningful deploy. Computed once at module load (cold start), not
+// per request. Falls back to "dev" if the bundle isn't on disk yet.
+function bundleVersion(): string {
+  const candidates = [
+    path.join(DIST_DIR, "mcp-app.html"),
+    path.join(process.cwd(), "dist", "mcp-app.html"),
+  ];
+  for (const candidate of candidates) {
+    try {
+      return createHash("sha256").update(readFileSync(candidate)).digest("hex").slice(0, 8);
+    } catch {
+      // try next candidate
+    }
+  }
+  return "dev";
+}
+
+const BUNDLE_VERSION = bundleVersion();
+
 // The UI bundle is served twice from the same HTML so one server works in both
 // hosts: MCP hosts (Claude) read RESOURCE_URI via _meta.ui.resourceUri; ChatGPT
 // reads SKYBRIDGE_URI via _meta["openai/outputTemplate"] and needs the skybridge
 // mime. The bundle detects the host at runtime (see src/app.tsx).
-const RESOURCE_URI = "ui://product-picker/mcp-app.html";
-const SKYBRIDGE_URI = "ui://product-picker/mcp-app.skybridge.html";
+export const RESOURCE_URI = `ui://product-picker/mcp-app-${BUNDLE_VERSION}.html`;
+export const SKYBRIDGE_URI = `ui://product-picker/mcp-app-${BUNDLE_VERSION}.skybridge.html`;
 const SKYBRIDGE_MIME = "text/html+skybridge";
 
 // Domains the iframe needs to load product images (picsum redirects to fastly).
@@ -160,6 +186,9 @@ export function createServer(): McpServer {
               `2. Adjust the cart by id with add-to-cart, set-quantity, and remove-from-cart; read it with get-cart.\n` +
               `3. To check out, call checkout to get a checkout link and share it with the user — do not try to ` +
               `pay or confirm the order yourself.\n` +
+              `4. The user completes the purchase themselves on that page; the widget will tell you when it's done. ` +
+              `When the user (or the widget) indicates the purchase completed, call get-order-status to fetch the ` +
+              `details and confirm to the user: the order ID, the total, and that their items are on the way.\n` +
               `Use get-product-details and get-product-reviews to answer questions about items.`,
           },
         ],
@@ -314,24 +343,76 @@ export function createServer(): McpServer {
       title: "Checkout",
       description:
         "Hand off to checkout: snapshot the cart into an order and return a checkout link for the user " +
-        "to complete the purchase on the merchant page. Does not place the order or take payment.",
-      inputSchema: {},
+        "to complete the purchase on the merchant page. Does not place the order or take payment. " +
+        "The picker passes the on-screen cart via `items`; called without items, it falls back to the shared cart.",
+      // The widget passes its exact on-screen cart so checkout always matches
+      // what the user sees, even if the shared server cart is briefly out of
+      // sync (e.g. a host that doesn't round-trip widget tool calls reliably).
+      // The order is built purely from these items and carried in the link's
+      // token, so the whole hand-off is independent of cartStore persistence.
+      inputSchema: {
+        items: z
+          .array(z.object({ productId: z.string(), quantity: z.number().int().min(1) }))
+          .optional(),
+      },
       annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
       _meta: UI_META,
     },
-    async (): Promise<CallToolResult> => {
-      const cart = await cartStore.read();
-      if (cart.size === 0) {
+    async ({ items }): Promise<CallToolResult> => {
+      let entries: { productId: string; quantity: number }[];
+      if (items && items.length > 0) {
+        entries = items;
+        // Reconcile the shared cart so later get-cart reads match the order.
+        await cartStore.write(new Map(items.map((i) => [i.productId, i.quantity])));
+      } else {
+        const cart = await cartStore.read();
+        entries = [...cart.entries()].map(([productId, quantity]) => ({ productId, quantity }));
+      }
+      if (entries.length === 0) {
         return {
           content: [{ type: "text", text: "The cart is empty — add items before checking out." }],
           isError: true,
         };
       }
-      const items = [...cart.entries()].map(([productId, quantity]) => ({ productId, quantity }));
-      const { orderId, checkoutUrl } = createCheckoutOrder(items);
+      const { orderId, checkoutUrl } = createCheckoutOrder(entries);
       return {
         structuredContent: { orderId, checkoutUrl },
         content: [{ type: "text", text: JSON.stringify({ orderId, checkoutUrl }) }],
+      };
+    },
+  );
+
+  // Poll for purchase completion. The checkout hand-off happens on a page outside
+  // the agent, and MCP has no server->client push, so after sharing a checkout link
+  // the agent calls this to learn whether the user finished authorizing. On success
+  // the gate also clears the cart, so get-cart returning empty is a second signal.
+  // Model-only (not UI-linked): the agent reports the result in chat.
+  server.registerTool(
+    "get-order-status",
+    {
+      title: "Get Order Status",
+      description:
+        "Read-only check of the user's most recent completed purchase. The user initiates and completes checkout " +
+        "themselves; this tool only reports status. Returns the completed order — order ID, amount, currency, " +
+        "payment instrument, and the authorization gate results — or a note that none is complete yet. Call it once " +
+        "the user (or the widget) says the purchase finished, then confirm the order ID and total to the user and " +
+        "tell them their items are on the way. Pass orderId to require a specific order.",
+      inputSchema: { orderId: z.string().optional() },
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async ({ orderId }): Promise<CallToolResult> => {
+      const order = await orderStore.read();
+      const matches = !!order && (!orderId || order.orderId === orderId);
+      if (!matches) {
+        return {
+          content: [
+            { type: "text", text: "No completed purchase yet — the user hasn't finished authorizing on the checkout page." },
+          ],
+        };
+      }
+      return {
+        structuredContent: order as unknown as Record<string, unknown>,
+        content: [{ type: "text", text: JSON.stringify(order) }],
       };
     },
   );
@@ -350,7 +431,15 @@ export function createServer(): McpServer {
           uri: RESOURCE_URI,
           mimeType: RESOURCE_MIME_TYPE,
           text: await loadBundle(),
-          _meta: { ui: { csp: { resourceDomains: IMAGE_DOMAINS } } },
+          // resourceDomains covers images (img-src). connectDomains is separate
+          // and maps to connect-src: without it the widget's order-status poll
+          // fetch to our own origin is blocked, so checkout completion never
+          // reaches the chat. Allowlist exactly the checkout origin we hand out.
+          _meta: {
+            ui: {
+              csp: { resourceDomains: IMAGE_DOMAINS, connectDomains: [getCheckoutBaseUrl()] },
+            },
+          },
         },
       ],
     }),
@@ -371,7 +460,7 @@ export function createServer(): McpServer {
           text: await loadBundle(),
           _meta: {
             "openai/widgetCSP": {
-              connect_domains: [],
+              connect_domains: [getCheckoutBaseUrl()],
               resource_domains: IMAGE_DOMAINS,
             },
           },

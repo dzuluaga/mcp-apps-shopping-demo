@@ -83,20 +83,24 @@ page.
    demoed: a **passkey** (WebAuthn / Touch ID) user-presence proof, and a
    cross-device **Digital Payment Credentials / AP2** flow where your phone's
    wallet signs the exact cart total via OpenID4VP (carried phone↔desktop over
-   FIDO caBLE) to produce an AP2 Payment Mandate. Nothing is charged.
+   FIDO caBLE) to produce an AP2 Payment Mandate — see
+   [`payment-gate/README.md`](payment-gate/README.md). Nothing is charged.
 
 The UI and the agent share one server-side cart, so anything Claude changes is
 reflected in the picker's cart badge, and anything you add in the picker shows
 up in chat. The cart is kept in-memory locally (lost on server restart); orders
 carry no server state — they're encoded into the checkout link. The checkout
 page is a mock (no real charge), but the **Authorize payment** step on it is a
-real ceremony — passkey user-presence, or the cross-device, amount-bound Digital
-Payment Credentials / AP2 variant where the wallet signs over the exact cart
-total.
+real ceremony — passkey user-presence (see
+[`payment-gate/README.md`](payment-gate/README.md)), or the cross-device,
+amount-bound Digital Payment Credentials / AP2 variant where the wallet signs
+over the exact cart total via OpenID4VP, carried phone↔desktop over FIDO caBLE
+(see [`payment-gate/dc-payment/`](payment-gate/dc-payment/README.md)).
 
 ## Demo
 
-See it running end to end (browse → edit cart → checkout hand-off):
+See it running end to end (browse → edit cart → checkout with Digital Payment
+Credentials → AP2 Payment Mandate):
 
 - **Claude native app:** <https://youtube.com/shorts/JA91c2d2DhQ>
 - **ChatGPT:** <https://youtube.com/shorts/8rMx5P1AOgI>

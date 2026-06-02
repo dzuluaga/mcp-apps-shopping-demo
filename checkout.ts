@@ -1,6 +1,7 @@
 import http from "node:http";
 import { randomBytes } from "node:crypto";
 import { createOrder, type CartItemInput, type Order } from "./catalog.js";
+import type { CompletedOrder } from "./orderStore.js";
 
 // Base URL the checkout link points at. Falls back to localhost for local runs;
 // on Vercel it derives from the project's production domain so the link resolves
@@ -18,6 +19,13 @@ let checkoutBaseUrl = defaultBaseUrl();
 // Point the checkout link at a specific origin (trailing slashes trimmed).
 export function setCheckoutBaseUrl(url: string): void {
   checkoutBaseUrl = url.replace(/\/+$/, "");
+}
+
+// The origin the checkout link (and the widget's order-status poll) target.
+// The embedded widget must list this in its CSP connect-src or the poll's
+// fetch is blocked, so the UI resource derives connectDomains from it.
+export function getCheckoutBaseUrl(): string {
+  return checkoutBaseUrl;
 }
 
 // Random, no persistent counter (a counter cannot survive across serverless
@@ -60,6 +68,24 @@ export function createCheckoutOrder(items: CartItemInput[]): { orderId: string; 
   return { orderId: order.id, checkoutUrl: `${checkoutBaseUrl}/checkout?order=${token}` };
 }
 
+// Build a completed-order record for the instant-demo path (no device prompt).
+// Mirrors what the payment gates write on success so the agent's confirmation
+// poll sees the same shape, but marks the method/gates as a demo.
+export function demoCompletedOrder(token: string): CompletedOrder | null {
+  const order = decodeOrder(token);
+  if (!order) return null;
+  return {
+    orderId: order.id,
+    mandateId: `demo_${order.id}`,
+    amount: order.total,
+    currency: order.currency,
+    method: "instant-demo",
+    instrument: { issuer: "demo", maskedAccount: null, holder: null },
+    gates: [{ gate: "Instant demo", pass: true, detail: "Device authorization skipped (demo)" }],
+    completedAt: new Date().toISOString(),
+  };
+}
+
 function formatMoney(amount: number, currency: string): string {
   return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(amount);
 }
@@ -72,7 +98,7 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
-function renderCheckoutPage(order: Order): string {
+function renderCheckoutPage(order: Order, token: string): string {
   const rows = order.lines
     .map(
       (l) => `<tr>
@@ -96,10 +122,9 @@ function renderCheckoutPage(order: Order): string {
   .num { text-align: right; font-variant-numeric: tabular-nums; }
   .total { font-weight: 600; font-size: 16px; }
   .total td { border-bottom: none; padding-top: 16px; }
-  button { margin-top: 24px; width: 100%; padding: 14px; font-size: 15px; font-weight: 600;
-    color: #fff; background: #1a7f37; border: none; border-radius: 8px; cursor: pointer; }
-  button:disabled { background: #8bbf99; cursor: default; }
   .note { color: #888; font-size: 12px; margin-top: 12px; text-align: center; }
+  button { display: block; margin-top: 12px; width: 100%; padding: 12px; font-size: 14px; font-weight: 500; color: #1a1a1a; background: #fff; border: 1px solid #d0d0d0; border-radius: 8px; cursor: pointer; box-sizing: border-box; }
+  button:disabled { color: #888; cursor: default; }
 </style>
 </head>
 <body>
@@ -109,12 +134,36 @@ function renderCheckoutPage(order: Order): string {
     ${rows}
     <tr class="total"><td>Total</td><td class="num">${formatMoney(order.total, order.currency)}</td></tr>
   </table>
-  <button id="place">Place order</button>
-  <div class="note">Demo checkout — no real charge.</div>
+  <a id="authorize" href="/payment-gate/passkey?order=${encodeURIComponent(token)}"
+     style="display:block;margin-top:24px;width:100%;padding:14px;font-size:15px;font-weight:600;
+     text-align:center;color:#fff;background:#1a7f37;border-radius:8px;text-decoration:none;box-sizing:border-box;">
+    Authorize payment with a passkey
+  </a>
+  <a id="authorize-xdev" href="/payment-gate/dc-payment?order=${encodeURIComponent(token)}"
+     style="display:block;margin-top:10px;width:100%;padding:12px;font-size:14px;font-weight:500;
+     text-align:center;color:#1a7f37;background:#fff;border:1px solid #1a7f37;border-radius:8px;text-decoration:none;box-sizing:border-box;">
+    Authorize on my phone (cross-device)
+  </a>
+  <div class="note">You'll confirm the exact amount with your device. Demo — no real charge.</div>
+  <button id="place">Place order (instant demo)</button>
+  <div class="note">Skips the device prompt — no real charge.</div>
   <script>
-    document.getElementById('place').addEventListener('click', function () {
+    document.getElementById('place').addEventListener('click', async function () {
       this.disabled = true;
-      this.textContent = 'Order placed ✓ (demo)';
+      this.textContent = 'Placing order…';
+      try {
+        const res = await fetch('/checkout/place-order', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ order: ${JSON.stringify(token)} }),
+        });
+        if (!res.ok) throw new Error('place-order failed: ' + res.status);
+        this.textContent = 'Order placed ✓ (demo)';
+      } catch (e) {
+        this.disabled = false;
+        this.textContent = 'Place order (instant demo)';
+        alert('Could not place the order. Please try again.');
+      }
     });
   </script>
 </body>
@@ -140,7 +189,7 @@ export function checkoutResponse(token: string | undefined): { status: number; h
   // Intl.NumberFormat / escapeHtml. Fall back to 404 so the stdio listener (raw
   // http, no error middleware) returns cleanly instead of hanging the socket.
   try {
-    return { status: 200, html: renderCheckoutPage(order) };
+    return { status: 200, html: renderCheckoutPage(order, token!) };
   } catch {
     return { status: 404, html: renderNotFound() };
   }

@@ -30,7 +30,6 @@ interface OpenAiBridge {
   toolOutput?: unknown;
   callTool?: (name: string, params?: Record<string, unknown>) => Promise<unknown>;
   openExternal?: (opts: { href: string }) => void | Promise<void>;
-  sendFollowUpMessage?: (opts: { prompt: string }) => void | Promise<void>;
 }
 declare global {
   interface Window {
@@ -107,17 +106,55 @@ function withQuantity(cart: PricedCart, productId: string, quantity: number): Pr
   return priceCartLocal(filtered);
 }
 
-// Debounce a side effect so a burst of stepper clicks coalesces into a single
-// call (e.g. one chat hand-off, not one per click).
-function useDebounced(fn: () => void, delayMs: number): () => void {
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const fnRef = useRef(fn);
-  fnRef.current = fn;
-  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
-  return useCallback(() => {
-    if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => fnRef.current(), delayMs);
-  }, [delayMs]);
+type CompletedOrder = { orderId: string; amount: number; currency: string; method?: string };
+
+// How the payment was authorized, for the in-widget confirmation panel.
+function methodLabel(method: string | undefined): string {
+  switch (method) {
+    case "instant-demo":
+      return "Instant demo";
+    case "passkey":
+      return "Passkey";
+    case "dc-payment":
+      return "Cross-device passkey";
+    default:
+      return method ?? "—";
+  }
+}
+
+// After checkout, poll the same-origin status endpoint until the user completes
+// the purchase on the gate page. This runs in the browser — the live surface
+// that can poll — so the agent is never asked to. Resolves with the order on
+// completion, or null on timeout/cancel. The signal lets the component cancel
+// the loop on unmount.
+async function pollOrderCompletion(
+  origin: string,
+  orderId: string,
+  signal: { cancelled: boolean },
+  opts: { intervalMs?: number; maxMs?: number } = {},
+): Promise<CompletedOrder | null> {
+  const intervalMs = opts.intervalMs ?? 3000;
+  const deadline = Date.now() + (opts.maxMs ?? 5 * 60_000);
+  while (!signal.cancelled && Date.now() < deadline) {
+    try {
+      const res = await fetch(`${origin}/checkout/order-status?orderId=${encodeURIComponent(orderId)}`);
+      if (res.ok) {
+        const data = (await res.json()) as { completed?: boolean; order?: CompletedOrder };
+        if (data.completed && data.order) return data.order;
+      }
+    } catch {
+      // transient network error; keep polling
+    }
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  return null;
+}
+
+// Silent model context pushed after a completed purchase so the agent stays
+// aware of the order (and that the cart is now empty) without drafting anything
+// into the composer. The in-widget confirmation panel is the user-facing surface.
+function orderContextMarkdown(order: CompletedOrder): string {
+  return `The user completed their purchase on the checkout page — order ${order.orderId}, total ${formatMoney(order.amount, order.currency)} (paid via ${methodLabel(order.method)}). The cart is now empty. If the user brings up the order, confirm these details; otherwise carry on. Show the catalog again whenever they want to keep shopping.`;
 }
 
 // Ambient context so the agent always knows the current cart (with ids) and how
@@ -142,9 +179,14 @@ Drive the experience in chat: confirm the cart and ask whether to add more or ch
 // ----- Host mode: connects to the MCP host bridge -----
 
 function HostApp() {
-  const [products, setProducts] = useState<Product[]>([]);
+  // Seed with the bundled catalog so a widget opened by a cart-only tool (e.g.
+  // get-cart, which doesn't carry the catalog) renders products immediately
+  // instead of getting stuck on "Loading products…". browse-products' _meta
+  // overwrites this with the same static list.
+  const [products, setProducts] = useState<Product[]>(CATALOG);
   const [cart, setCart] = useState<PricedCart>(emptyCart());
   const [insets, setInsets] = useState<Insets>();
+  const [confirmedOrder, setConfirmedOrder] = useState<CompletedOrder | null>(null);
   const appRef = useRef<Parameters<NonNullable<Parameters<typeof useApp>[0]["onAppCreated"]>>[0] | null>(null);
   // Mirrors `cart` so setQuantity can read the current value synchronously
   // (state is async) and compute the next optimistic cart.
@@ -157,14 +199,6 @@ function HostApp() {
       ?.updateModelContext({ content: [{ type: "text", text: cartContextMarkdown(c) }] })
       .catch(console.error);
   }, []);
-
-  // Nudge the agent to confirm after the user edits the cart in the widget.
-  // Debounced so adjusting a stepper a few times sends one message, not many.
-  const notifyAgent = useDebounced(() => {
-    appRef.current
-      ?.sendMessage({ role: "user", content: [{ type: "text", text: "I've updated my cart." }] })
-      .catch(console.error);
-  }, 900);
 
   const { app, error } = useApp({
     appInfo: { name: "Product Picker", version: "1.0.0" },
@@ -194,6 +228,7 @@ function HostApp() {
 
   const setQuantity = useCallback<SetQuantityFn>(async (productId, quantity) => {
     if (!appRef.current) return;
+    setConfirmedOrder(null); // editing the cart starts a new order
     applyCart(withQuantity(cartRef.current, productId, quantity)); // optimistic
     const result = await appRef.current.callServerTool({
       name: "set-quantity",
@@ -201,30 +236,50 @@ function HostApp() {
     });
     const parsed = parseJsonContent<PricedCart>(result);
     if (parsed) applyCart(parsed); // authoritative
-    notifyAgent();
-  }, [applyCart, notifyAgent]);
+  }, [applyCart]);
 
   // Hand off to checkout: snapshot the cart into an order (server side) and open
   // the returned merchant URL in the browser. The agent does not place the order
-  // or take payment — the user finishes on that page.
+  // or take payment — the user finishes on that page. Then poll for completion
+  // and, when done, show the in-widget confirmation panel and push silent context
+  // to the agent (no composer draft).
+  const pollRef = useRef<{ cancelled: boolean } | null>(null);
+  useEffect(() => () => { if (pollRef.current) pollRef.current.cancelled = true; }, []);
   const checkout = useCallback<CheckoutFn>(async () => {
     if (!appRef.current) return;
-    const result = await appRef.current.callServerTool({ name: "checkout", arguments: {} });
-    const parsed = parseJsonContent<{ checkoutUrl?: string }>(result);
-    if (parsed?.checkoutUrl) {
-      await appRef.current.openLink({ url: parsed.checkoutUrl });
-    }
-  }, []);
+    // Pass the on-screen cart so the order matches exactly what the user sees,
+    // independent of whether prior set-quantity calls round-tripped to the server.
+    const items = cartRef.current.lines.map((l) => ({ productId: l.id, quantity: l.quantity }));
+    const result = await appRef.current.callServerTool({ name: "checkout", arguments: { items } });
+    const parsed = parseJsonContent<{ orderId?: string; checkoutUrl?: string }>(result);
+    if (!parsed?.checkoutUrl) return;
+    await appRef.current.openLink({ url: parsed.checkoutUrl });
+    if (!parsed.orderId) return;
+    if (pollRef.current) pollRef.current.cancelled = true;
+    const signal = { cancelled: false };
+    pollRef.current = signal;
+    const order = await pollOrderCompletion(new URL(parsed.checkoutUrl).origin, parsed.orderId, signal);
+    if (!order || signal.cancelled) return;
+    setConfirmedOrder(order); // read-only confirmation panel in the widget
+    // The gate clears the cart server-side; refresh the badge to match.
+    const refreshed = await appRef.current?.callServerTool({ name: "get-cart", arguments: {} });
+    const c = refreshed && parseJsonContent<PricedCart>(refreshed);
+    if (c) applyCart(c); // applyCart pushes cart context; override with the order below
+    // Silent: agent knows the order without anything landing in the composer.
+    appRef.current
+      ?.updateModelContext({ content: [{ type: "text", text: orderContextMarkdown(order) }] })
+      .catch(console.error);
+  }, [applyCart]);
 
   if (error) return <div className={styles.status}><strong>Error:</strong> {error.message}</div>;
   if (!app) return <div className={styles.status}>Connecting…</div>;
 
-  return <Picker products={products} cart={cart} insets={insets} setQuantity={setQuantity} checkout={checkout} />;
+  return <Picker products={products} cart={cart} insets={insets} setQuantity={setQuantity} checkout={checkout} confirmedOrder={confirmedOrder} />;
 }
 
 // ----- ChatGPT mode: connects to the window.openai bridge -----
 // Same UI as host mode; only the bridge differs. callServerTool → callTool,
-// openLink → openExternal, sendMessage → sendFollowUpMessage, and tool results
+// openLink → openExternal, and tool results
 // arrive via window.openai.toolOutput (refreshed on the openai:set_globals event)
 // instead of ontoolresult.
 
@@ -232,6 +287,7 @@ function ChatGptApp() {
   const oai = window.openai!;
   const [products, setProducts] = useState<Product[]>(CATALOG);
   const [cart, setCart] = useState<PricedCart>(emptyCart());
+  const [confirmedOrder, setConfirmedOrder] = useState<CompletedOrder | null>(null);
 
   // browse-products yields { products, cart }; cart tools yield a PricedCart.
   const applyToolOutput = useCallback((output: unknown) => {
@@ -249,24 +305,34 @@ function ChatGptApp() {
     return () => window.removeEventListener("openai:set_globals", onGlobals);
   }, [applyToolOutput]);
 
-  const notifyAgent = useDebounced(() => {
-    oai.sendFollowUpMessage?.({ prompt: "I've updated my cart." });
-  }, 900);
-
   const setQuantity = useCallback<SetQuantityFn>(async (productId, quantity) => {
+    setConfirmedOrder(null); // editing the cart starts a new order
     setCart((prev) => withQuantity(prev, productId, quantity)); // optimistic
     const result = await oai.callTool?.("set-quantity", { productId, quantity });
     applyToolOutput(structuredOf(result)); // authoritative
-    notifyAgent();
-  }, [oai, applyToolOutput, notifyAgent]);
+  }, [oai, applyToolOutput]);
 
+  const pollRef = useRef<{ cancelled: boolean } | null>(null);
+  useEffect(() => () => { if (pollRef.current) pollRef.current.cancelled = true; }, []);
   const checkout = useCallback<CheckoutFn>(async () => {
-    const result = await oai.callTool?.("checkout", {});
-    const url = (structuredOf(result) as { checkoutUrl?: string } | undefined)?.checkoutUrl;
-    if (url) await oai.openExternal?.({ href: url });
-  }, [oai]);
+    // Pass the on-screen cart so the order matches exactly what the user sees.
+    const items = cart.lines.map((l) => ({ productId: l.id, quantity: l.quantity }));
+    const result = await oai.callTool?.("checkout", { items });
+    const parsed = structuredOf(result) as { orderId?: string; checkoutUrl?: string } | undefined;
+    if (!parsed?.checkoutUrl) return;
+    await oai.openExternal?.({ href: parsed.checkoutUrl });
+    if (!parsed.orderId) return;
+    if (pollRef.current) pollRef.current.cancelled = true;
+    const signal = { cancelled: false };
+    pollRef.current = signal;
+    const order = await pollOrderCompletion(new URL(parsed.checkoutUrl).origin, parsed.orderId, signal);
+    if (!order || signal.cancelled) return;
+    setConfirmedOrder(order); // read-only confirmation panel in the widget
+    const refreshed = await oai.callTool?.("get-cart", {});
+    applyToolOutput(structuredOf(refreshed));
+  }, [oai, applyToolOutput, cart]);
 
-  return <Picker products={products} cart={cart} setQuantity={setQuantity} checkout={checkout} />;
+  return <Picker products={products} cart={cart} setQuantity={setQuantity} checkout={checkout} confirmedOrder={confirmedOrder} />;
 }
 
 // ----- Standalone mode: runs in a plain browser with the local catalog -----
@@ -295,9 +361,10 @@ interface PickerProps {
   insets?: Insets;
   setQuantity: SetQuantityFn;
   checkout?: CheckoutFn;
+  confirmedOrder?: CompletedOrder | null;
 }
 
-function Picker({ products, cart, insets, setQuantity, checkout }: PickerProps) {
+function Picker({ products, cart, insets, setQuantity, checkout, confirmedOrder }: PickerProps) {
   const [checkingOut, setCheckingOut] = useState(false);
 
   // The stepper reflects the live cart: each card shows the quantity already in
@@ -382,6 +449,26 @@ function Picker({ products, cart, insets, setQuantity, checkout }: PickerProps) 
               </div>
             );
           })}
+        </div>
+      )}
+
+      {confirmedOrder && (
+        <div className={styles.confirmation} role="status" aria-live="polite">
+          <div className={styles.confirmHeader}>✓ Order confirmed</div>
+          <dl className={styles.confirmFields}>
+            <div className={styles.confirmRow}>
+              <dt>Order</dt>
+              <dd>{confirmedOrder.orderId}</dd>
+            </div>
+            <div className={styles.confirmRow}>
+              <dt>Total</dt>
+              <dd>{formatMoney(confirmedOrder.amount, confirmedOrder.currency)}</dd>
+            </div>
+            <div className={styles.confirmRow}>
+              <dt>Payment</dt>
+              <dd>{methodLabel(confirmedOrder.method)}</dd>
+            </div>
+          </dl>
         </div>
       )}
 
