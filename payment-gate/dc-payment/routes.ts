@@ -1,5 +1,7 @@
 import express, { type Express, type Request, type Response } from "express";
 import { decodeOrder } from "../../checkout.js";
+import { cartStore } from "../../cartStore.js";
+import { orderStore } from "../../orderStore.js";
 import { deriveOrigin } from "../origin.js";
 import { gateSecret } from "../challengeToken.js";
 import { buildBindingFields } from "../mandate.js";
@@ -52,7 +54,24 @@ export function registerDcPaymentGate(app: Express): void {
     try {
       const origin = originOf(req);
       const { mandate, gates } = await verifyDcPresentation({ order, origin, result, readerContextToken, secret: gateSecret() });
-      res.json({ mandate, gates, binding: buildBindingFields(order, origin) });
+      // Only a fully-authorized mandate completes the purchase: record it for the
+      // agent to poll and clear the shared cart so the next session starts fresh.
+      const completed = gates.every((g) => g.pass);
+      if (completed) {
+        const inst = mandate.payment.instrument;
+        await orderStore.write({
+          orderId: order.id,
+          mandateId: mandate.id,
+          amount: mandate.payment.amount,
+          currency: mandate.payment.currency,
+          method: "dc-payment",
+          instrument: { issuer: inst.issuer, maskedAccount: inst.maskedAccount, holder: inst.holder },
+          gates: gates.map((g) => ({ gate: g.gate, pass: g.pass, detail: g.detail })),
+          completedAt: new Date().toISOString(),
+        });
+        await cartStore.write(new Map());
+      }
+      res.json({ mandate, gates, completed, binding: buildBindingFields(order, origin) });
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
     }

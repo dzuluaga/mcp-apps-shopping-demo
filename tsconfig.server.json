@@ -11,5 +11,5 @@
     "esModuleInterop": true,
     "resolveJsonModule": true
   },
-  "include": ["server.ts", "main.ts", "catalog.ts", "checkout.ts", "cartStore.ts", "app.ts", "api/index.ts"]
+  "include": ["server.ts", "main.ts", "catalog.ts", "checkout.ts", "cartStore.ts", "orderStore.ts", "app.ts", "api/index.ts"]
 }

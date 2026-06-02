@@ -19,6 +19,7 @@ import {
 } from "./catalog.js";
 import { createCheckoutOrder } from "./checkout.js";
 import { cartStore } from "./cartStore.js";
+import { orderStore } from "./orderStore.js";
 
 // Resolve the bundled UI relative to this module, working from both
 // source (server.ts) and compiled (dist/server.js).
@@ -160,6 +161,8 @@ export function createServer(): McpServer {
               `2. Adjust the cart by id with add-to-cart, set-quantity, and remove-from-cart; read it with get-cart.\n` +
               `3. To check out, call checkout to get a checkout link and share it with the user — do not try to ` +
               `pay or confirm the order yourself.\n` +
+              `4. After the user authorizes on that page, call get-order-status to confirm the purchase and report ` +
+              `the details; a cleared cart (get-cart empty) is a second signal it completed.\n` +
               `Use get-product-details and get-product-reviews to answer questions about items.`,
           },
         ],
@@ -332,6 +335,38 @@ export function createServer(): McpServer {
       return {
         structuredContent: { orderId, checkoutUrl },
         content: [{ type: "text", text: JSON.stringify({ orderId, checkoutUrl }) }],
+      };
+    },
+  );
+
+  // Poll for purchase completion. The checkout hand-off happens on a page outside
+  // the agent, and MCP has no server->client push, so after sharing a checkout link
+  // the agent calls this to learn whether the user finished authorizing. On success
+  // the gate also clears the cart, so get-cart returning empty is a second signal.
+  // Model-only (not UI-linked): the agent reports the result in chat.
+  server.registerTool(
+    "get-order-status",
+    {
+      title: "Get Order Status",
+      description:
+        "Check whether the user has completed a purchase on the checkout/payment page. Returns the most " +
+        "recent completed order — amount, payment instrument, and the authorization gate results — or a note " +
+        "that none is complete yet. Call this after handing off to checkout to confirm the purchase went through.",
+      inputSchema: {},
+      annotations: { readOnlyHint: true, openWorldHint: false },
+    },
+    async (): Promise<CallToolResult> => {
+      const order = await orderStore.read();
+      if (!order) {
+        return {
+          content: [
+            { type: "text", text: "No completed purchase yet — the user hasn't finished authorizing on the checkout page." },
+          ],
+        };
+      }
+      return {
+        structuredContent: order as unknown as Record<string, unknown>,
+        content: [{ type: "text", text: JSON.stringify(order) }],
       };
     },
   );

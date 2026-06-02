@@ -93,9 +93,13 @@ export function renderDcPage(args: { order: Order; orderToken: string }): string
     function renderReceipt(out) {
       const el = document.getElementById("receipt");
       const gates = out.gates.map((g) => '<div class="gate ' + (g.pass ? "pass" : "fail") + '">' + (g.pass ? "✓" : "✗") + " " + g.gate + " — " + g.detail + "</div>").join("");
+      const done = out.completed
+        ? '<div style="margin-top:0.85rem;padding-top:0.7rem;border-top:1px solid #cdeccd;font-size:0.95rem;font-weight:600;color:#0a7f2e;">Purchase complete — you can close this page and return to the chat.</div>'
+        : "";
       el.innerHTML = '<div style="font-weight:600;color:#0a7f2e;">✓ Payment Mandate authorized (amount-bound)</div>' +
-        '<div style="font-size:0.8rem;color:#666;margin:0.3rem 0 0.6rem;">' + out.mandate.id + "</div>" + gates;
+        '<div style="font-size:0.8rem;color:#666;margin:0.3rem 0 0.6rem;">' + out.mandate.id + "</div>" + gates + done;
       el.style.display = "block";
+      if (out.completed) btn.textContent = "Authorized ✓";
     }
   </script>
 </body>
