@@ -19,9 +19,12 @@ The encrypted `vp_token` returns to the **desktop** browser (the one that called
 
 `txData.ts` builds one `transaction_data` entry from the order + origin
 (`amount`, `currency`, `payee`, fresh `transaction_id`). We send its base64url
-form; the wallet signs a hash of exactly that string. Gate 1 re-derives the hash
-and re-checks amount + payee against the cart — it never trusts a `verified`
-boolean.
+form; the wallet signs a hash of exactly that string. `extractDcEvidence`
+(`mandate.ts`) re-derives the hash and re-checks amount + currency + payee
+against the cart — never trusting a `verified` boolean — and records the verdict
+as `amountBound`. This is the one check the AP2 sidecar can't make (it never sees
+the vp_token), so it is computed here in TS and surfaced as the sidecar's
+**`amount_signature_bound`** gate.
 
 ## Statelessness
 
@@ -41,15 +44,19 @@ returned to the client and POSTed back. No server memory between `/request` and
 
 ## What's real vs mocked
 
-Real: the WebAuthn-class ceremony, the wallet signature over the amount, the
-JWE decryption, the four gates. Mocked: no real money, no real merchant/issuer
-trust check (the reader cert is self-signed → expect an "unverified verifier"
-warning), credentials are not persisted. The mandate is the authorization
-artifact; the unsigned order token is not authoritative for payment.
+Real: the WebAuthn-class ceremony, the wallet signature over the amount, the JWE
+decryption, the amount-binding verdict, and the **real ES256 SD-JWT
+PaymentMandate** signed + gated by the AP2 sidecar (the official AP2 SDK; see
+`ap2-sidecar/`). Mocked: no real money, no real merchant/issuer trust check (the
+reader cert is self-signed → expect an "unverified verifier" warning),
+credentials are not persisted. The mandate is the authorization artifact; the
+unsigned order token is not authoritative for payment.
 
 ## Files
 
-`txData.ts` binding · `mdoc.ts` structural decode · `mandate.ts` DC mandate + 4
-gates · `readerContext.ts` sealed ephemeral key · `request.ts` signed OpenID4VP
-request · `verify.ts` decrypt+verify+assemble · `page.ts` the QR page ·
-`routes.ts` mounting. Tests sit beside each module.
+`txData.ts` binding · `mdoc.ts` structural decode · `mandate.ts`
+`extractDcEvidence` (amount-binding + disclosed instrument) · `readerContext.ts`
+sealed ephemeral key · `request.ts` signed OpenID4VP request · `verify.ts`
+decrypt + extract evidence · `page.ts` the QR page · `routes.ts` mounting (hands
+evidence to the AP2 sidecar via `../ap2Client.ts`). Tests sit beside each module;
+the SD-JWT mandate + gates are tested in `ap2-sidecar/tests/`.

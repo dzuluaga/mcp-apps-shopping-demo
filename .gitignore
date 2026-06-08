@@ -3,3 +3,10 @@ dist/
 *.log
 .vercel
 .env*.local
+
+# Python sidecar (ap2-sidecar/)
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/

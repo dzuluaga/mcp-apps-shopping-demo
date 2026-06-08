@@ -5,7 +5,14 @@
     "api/index.ts": {
       "includeFiles": "{dist/**,node_modules/@simplewebauthn/browser/**}",
       "maxDuration": 60
+    },
+    "api/ap2/index.py": {
+      "includeFiles": "ap2-sidecar/**",
+      "maxDuration": 60
     }
   },
-  "rewrites": [{ "source": "/(.*)", "destination": "/api" }]
+  "rewrites": [
+    { "source": "/ap2/(.*)", "destination": "/api/ap2" },
+    { "source": "/(.*)", "destination": "/api" }
+  ]
 }

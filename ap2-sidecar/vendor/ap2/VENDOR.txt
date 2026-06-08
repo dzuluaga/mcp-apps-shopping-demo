@@ -1,0 +1,5 @@
+Vendored from https://github.com/google-agentic-commerce/AP2
+Path: code/sdk/python/ap2
+Commit: e1ea56db72a6385bce3e5c1112b3a56ce60acb43
+Date: 2026-06-05
+Do not edit in place; re-vendor from the pinned commit.

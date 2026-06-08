@@ -48,23 +48,34 @@ A single registration ceremony (`verifyRegistrationResponse`) is used as the
 authorization gesture — not register-then-authenticate — so there is one Touch
 ID prompt and nothing is persisted.
 
-## The four gates
+## Mandate authorization & gates (AP2 SD-JWT)
 
-`runGates(mandate)` in `payment-gate/mandate.ts` validates the mandate. Each gate
-is **re-derived from the mandate's own fields** — no gate trusts a `verified`
-boolean handed to it:
+The gate no longer mints a mock-signed mandate. After the WebAuthn ceremony, the
+route hands the device evidence to the **AP2 sidecar** — a Python service
+(`ap2-sidecar/`) wrapping the official
+[AP2 SDK](https://github.com/google-agentic-commerce/AP2), called over HTTP via
+`payment-gate/ap2Client.ts`. The sidecar mints a real **ES256 SD-JWT
+PaymentMandate** and runs the validation gates. Each gate is **re-derived from
+the mandate's own signed fields** — no gate trusts a `verified` boolean:
 
-1. **Amount integrity** — re-sums the cart line totals and checks they equal both
-   `payment.amount` and `cart.total`. Passkeys do not cryptographically sign the
-   amount (that is the DC gate's job, below), so passkey amount-binding is a
-   *consistency* check, not cryptographic proof.
-2. **Authorization present** — the `userAuthorization` is structurally a
-   `webauthn.assertion` with a credential id.
-3. **User verification** — the authenticator asserted user verification (`uv`).
-4. **Subject binding** — the mandate `subject.credentialID` matches the
-   authorization's `credentialID`.
+- **signature** — the SD-JWT issuer signature verifies (real crypto, via the
+  SDK). This replaces the old `MOCK-DEV-SIGNER`.
+- **amount_integrity** — the signed `payment_amount` (ISO-4217 minor units)
+  equals the expected order total + currency.
+- **mandate_fresh** — the signed `exp` window is still open.
+- **payee_binding** — the signed `payee.id` matches this RP.
+- **authorization_present / user_verification / subject_binding** — the device
+  evidence carried in the mandate's `risk_data`: a `webauthn.assertion` with a
+  credential id, `userVerified` true, and the payment instrument bound to that
+  credential.
 
-The receipt rendered on the page shows each gate's pass/fail and its detail line.
+The WebAuthn assertion itself is verified in TS (`@simplewebauthn`) **before** the
+mandate is built — the SDK verifies the SD-JWT envelope, not the passkey. The
+receipt rendered on the page shows each gate's pass/fail and its detail line.
+
+> See `ap2-sidecar/README.md` and the migration plan
+> `docs/superpowers/plans/2026-06-05-ap2-python-sdk-sidecar.md`. Amounts are
+> dollars in the TS app and converted to minor units inside the sidecar.
 
 ## Running it locally
 
@@ -102,7 +113,7 @@ The crucial property: **the phone never talks to our server**. The assertion
 travels phone → desktop browser over the caBLE tunnel, and the desktop posts it
 to `/payment-gate/passkey/verify`, where our server verifies it exactly the same
 way as a same-device assertion. From the server's perspective there is no
-difference — `rpID`/`origin` binding and the four gates are identical.
+difference — `rpID`/`origin` binding and the AP2 mandate gates are identical.
 
 This is what makes "authorize on your phone a payment an agent prepared on your
 laptop" work without any device-pairing infrastructure of our own.

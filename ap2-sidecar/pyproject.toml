@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ap2-sidecar"
+version = "0.1.0"
+description = "Python sidecar wrapping the official AP2 SDK for the product-picker payment gate"
+# SDK requires >=3.11; target 3.12 to match the Vercel Python runtime (Task 0
+# decision). Runs on newer (verified on 3.14) but pin 3.12 in deployment.
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    # AP2 SDK runtime deps (the SDK itself is VENDORED under vendor/ap2, not a
+    # pip dependency — it ships no installable package). Versions pinned in
+    # Task 0's spike: cryptography 48, jwcrypto 1.5.7, pydantic 2.13, sd-jwt 0.10.4.
+    "cryptography>=46",
+    "jwcrypto>=1.5.7",
+    "pydantic>=2.9",
+    "sd-jwt>=0.10.4",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "httpx>=0.27"]

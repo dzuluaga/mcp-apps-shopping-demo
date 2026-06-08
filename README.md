@@ -245,10 +245,11 @@ resets on restart); orders are stateless, encoded into the checkout link.
 
 ## Deploy to Vercel
 
-The server also runs on Vercel as a single serverless function, which gives you
-a stable HTTPS origin without running a tunnel. `api/index.ts` exports the same
-Express app (`createApp()`), and `vercel.json` rewrites every path to it, so one
-function serves both `/mcp` and `/checkout`.
+The server runs on Vercel for a stable HTTPS origin without running a tunnel.
+`api/index.ts` exports the same Express app (`createApp()`) and serves `/mcp` +
+`/checkout` + the payment-gate routes; a second, **Python** function
+(`api/ap2/index.py`) serves the AP2 mandate sidecar. `vercel.json` rewrites
+`/ap2/*` to the Python function and everything else to the Node one.
 
 Serverless functions don't keep module memory between invocations, so the two
 pieces of shared state are handled differently:
@@ -343,9 +344,13 @@ npx @modelcontextprotocol/inspector node dist/main.js --stdio   # inspect tools/
   from one origin (no `listen()`), reused by both `main.ts` and the Vercel
   function.
 - `main.ts` — stdio (Claude Desktop) and HTTP entrypoints; calls `createApp()`
-  and listens locally, and starts the checkout listener in stdio mode
-- `api/index.ts` / `vercel.json` — Vercel serverless entrypoint (`export default
-  createApp()`) and config that rewrites all paths to the one function
+  and listens locally, starts the checkout listener in stdio mode, and spawns the
+  AP2 sidecar (`ap2-sidecar/`)
+- `api/index.ts` / `api/ap2/index.py` / `vercel.json` — Vercel entrypoints: the
+  Node function (`createApp()`) for `/mcp` + `/checkout`, the Python function for
+  the AP2 sidecar (`/ap2/*`); config rewrites paths to each
+- `ap2-sidecar/` — Python service wrapping the official AP2 SDK (vendored) that
+  signs + verifies the SD-JWT PaymentMandates the payment gates authorize
 - `catalog.ts` — sample products + reviews + `priceCart` / `createOrder` /
   `getProduct` / `getReviews` helpers
 - `src/app.tsx` — React selection UI with a footer Checkout button; one bundle

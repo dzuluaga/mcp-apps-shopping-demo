@@ -1,21 +1,18 @@
 // Verify the wallet's OpenID4VP presentation: open the sealed reader context,
-// decrypt the JWE response, extract the signed transaction_data_hash, assemble
-// the DC mandate, and run the gates. Ports the /result half of the spike server.
+// decrypt the JWE response, extract the signed transaction_data_hash, and
+// extract the dc device evidence (amount binding, auth blocks, instrument).
+// The AP2 mandate envelope + gates are then produced by the sidecar from this
+// evidence (see dc-payment/routes.ts).
 import * as jose from "jose";
 import type { Order } from "../../catalog.js";
 import type { Origin } from "../origin.js";
 import { openReaderContext } from "./readerContext.js";
 import { extractTransactionDataHash } from "./mdoc.js";
-import { buildDcMandate, runDcGates, type DcMandate, type GateResult } from "./mandate.js";
+import { extractDcEvidence, type DcEvidence } from "./mandate.js";
 
 export interface DcResult {
   protocol?: string;
   data?: unknown;
-}
-
-export interface DcVerification {
-  mandate: DcMandate;
-  gates: GateResult[];
 }
 
 export async function verifyDcPresentation(args: {
@@ -24,7 +21,7 @@ export async function verifyDcPresentation(args: {
   result: DcResult;
   readerContextToken: string;
   secret: string;
-}): Promise<DcVerification> {
+}): Promise<DcEvidence> {
   const { order, origin, result, readerContextToken, secret } = args;
   const ctx = await openReaderContext(readerContextToken, secret);
 
@@ -41,7 +38,5 @@ export async function verifyDcPresentation(args: {
   if (!vpStr) throw new Error("no vp_token.dpc in decrypted response");
 
   const tokenHash = extractTransactionDataHash(vpStr);
-  const mandate = buildDcMandate({ order, vpStr, transactionDataB64: ctx.transactionDataB64, tokenHash });
-  const gates = runDcGates(mandate, origin);
-  return { mandate, gates };
+  return extractDcEvidence({ order, origin, vpStr, transactionDataB64: ctx.transactionDataB64, tokenHash });
 }

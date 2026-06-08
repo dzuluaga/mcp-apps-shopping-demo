@@ -19,6 +19,15 @@ Planned work for the Product Picker MCP app. Status reflects intent, not a commi
   (cloud-assisted BLE) into the checkout hand-off flow.
   - [x] Passkey gate (same-device + cross-device caBLE) — `payment-gate/passkey/`.
   - [x] DC payment gate (cross-device caBLE, amount-bound) — `payment-gate/dc-payment/`.
+- [x] **Migrate payment mandates to the official AP2 SDK.** Replaced the
+  hand-rolled `0.1-mock`/`0.1-dc` mandates with real ES256 **SD-JWT
+  PaymentMandates** produced + verified by Google's AP2 Python SDK, wrapped in a
+  Python sidecar (`ap2-sidecar/`) the TS gates call over HTTP. Both passkey + DC.
+  Plan: `docs/superpowers/plans/2026-06-05-ap2-python-sdk-sidecar.md`.
+  - [ ] Verify the Vercel hybrid Node + Python deploy on a preview (the `/ap2/*`
+    rewrite → Python function path is structured but not yet deploy-tested).
+  - [ ] Model the AP2 delegation chain (intent → cart → payment via `present()`)
+    and the richer `CheckoutMandate`; currently a single `PaymentMandate`.
 
 ## Demo & docs
 

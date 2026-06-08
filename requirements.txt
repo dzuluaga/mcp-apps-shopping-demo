@@ -1,0 +1,9 @@
+# Python deps for the Vercel AP2 sidecar function (api/ap2/index.py).
+# The AP2 SDK itself is vendored under ap2-sidecar/vendor/ap2 (not on PyPI).
+# Versions pinned to the set verified in the Task 0 spike. uvicorn is omitted:
+# Vercel's Python runtime serves the ASGI app directly.
+fastapi==0.115.6
+cryptography==48.0.0
+jwcrypto==1.5.7
+pydantic==2.13.4
+sd-jwt==0.10.4

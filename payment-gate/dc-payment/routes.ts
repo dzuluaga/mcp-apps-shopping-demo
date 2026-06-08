@@ -5,6 +5,7 @@ import { orderStore } from "../../orderStore.js";
 import { deriveOrigin } from "../origin.js";
 import { gateSecret } from "../challengeToken.js";
 import { buildBindingFields } from "../mandate.js";
+import { buildMandate, verifyMandate } from "../ap2Client.js";
 import { buildSignedRequest } from "./request.js";
 import { verifyDcPresentation } from "./verify.js";
 import { renderDcPage } from "./page.js";
@@ -53,25 +54,35 @@ export function registerDcPaymentGate(app: Express): void {
     }
     try {
       const origin = originOf(req);
-      const { mandate, gates } = await verifyDcPresentation({ order, origin, result, readerContextToken, secret: gateSecret() });
+      // TS does the dc-specific crypto (decrypt + amount-binding); the sidecar
+      // mints the AP2 SD-JWT mandate from this evidence and runs the gates.
+      const evidence = await verifyDcPresentation({ order, origin, result, readerContextToken, secret: gateSecret() });
+      const built = await buildMandate({ order, channel: "dc", authorization: { ...evidence }, payeeId: origin.rpID });
+      const verdict = await verifyMandate({
+        mandate: built.mandate,
+        expectedAmount: order.total,
+        expectedCurrency: order.currency,
+        expectedPayeeId: origin.rpID,
+      });
+      const gates = verdict.gates;
       // Only a fully-authorized mandate completes the purchase: record it for the
       // agent to poll and clear the shared cart so the next session starts fresh.
-      const completed = gates.every((g) => g.pass);
+      const completed = verdict.valid;
       if (completed) {
-        const inst = mandate.payment.instrument;
         await orderStore.write({
           orderId: order.id,
-          mandateId: mandate.id,
-          amount: mandate.payment.amount,
-          currency: mandate.payment.currency,
+          mandateId: built.mandateId,
+          amount: order.total,
+          currency: order.currency,
           method: "dc-payment",
-          instrument: { issuer: inst.issuer, maskedAccount: inst.maskedAccount, holder: inst.holder },
-          gates: gates.map((g) => ({ gate: g.gate, pass: g.pass, detail: g.detail })),
+          instrument: { issuer: evidence.issuerName, maskedAccount: evidence.maskedAccount, holder: evidence.holderName },
+          gates,
           completedAt: new Date().toISOString(),
+          mandate: built.mandate,
         });
         await cartStore.write(new Map());
       }
-      res.json({ mandate, gates, completed, binding: buildBindingFields(order, origin) });
+      res.json({ mandate: { id: built.mandateId, format: "ap2-sdjwt", token: built.mandate }, gates, completed, binding: buildBindingFields(order, origin) });
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
     }

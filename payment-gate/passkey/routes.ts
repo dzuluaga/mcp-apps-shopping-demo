@@ -7,7 +7,8 @@ import { cartStore } from "../../cartStore.js";
 import { orderStore } from "../../orderStore.js";
 import { deriveOrigin } from "../origin.js";
 import { gateSecret } from "../challengeToken.js";
-import { buildPasskeyMandate, buildBindingFields, runGates } from "../mandate.js";
+import { buildBindingFields } from "../mandate.js";
+import { buildMandate, verifyMandate } from "../ap2Client.js";
 import { buildRegistrationOptions, verifyPasskeyAssertion } from "./verify.js";
 import { renderPasskeyPage } from "./page.js";
 
@@ -63,25 +64,46 @@ export function registerPasskeyGate(app: Express): void {
     try {
       const origin = originOf(req);
       const authenticator = await verifyPasskeyAssertion({ response, challengeToken, origin, secret: gateSecret() });
-      const mandate = buildPasskeyMandate({ order, authenticator, origin });
-      const gates = runGates(mandate);
+      // Device evidence carried into the signed AP2 mandate (the sidecar checks
+      // it but does not re-run the WebAuthn crypto — that ran just above).
+      const authorization = {
+        type: "webauthn.assertion",
+        credentialId: authenticator.credentialID,
+        userVerified: authenticator.userVerified,
+        deviceType: authenticator.credentialDeviceType,
+        hardwareBacked: authenticator.credentialDeviceType === "singleDevice",
+        backedUp: authenticator.credentialBackedUp,
+        rpId: origin.rpID,
+        origin: origin.origin,
+      };
+      // The AP2 sidecar mints the SD-JWT PaymentMandate and runs the gates.
+      const built = await buildMandate({ order, channel: "passkey", authorization, payeeId: origin.rpID });
+      const verdict = await verifyMandate({
+        mandate: built.mandate,
+        expectedAmount: order.total,
+        expectedCurrency: order.currency,
+        expectedPayeeId: origin.rpID,
+      });
+      const gates = verdict.gates;
       // Only a fully-authorized mandate completes the purchase: record it for the
       // agent to poll and clear the shared cart so the next session starts fresh.
-      const completed = gates.every((g) => g.pass);
+      const completed = verdict.valid;
       if (completed) {
         await orderStore.write({
           orderId: order.id,
-          mandateId: mandate.id,
-          amount: mandate.payment.amount,
-          currency: mandate.payment.currency,
+          mandateId: built.mandateId,
+          amount: order.total,
+          currency: order.currency,
           method: "passkey",
-          instrument: { issuer: mandate.payment.instrument, maskedAccount: mandate.payment.instrumentReference, holder: null },
-          gates: gates.map((g) => ({ gate: g.gate, pass: g.pass, detail: g.detail })),
+          instrument: { issuer: "ap2-passkey", maskedAccount: authenticator.credentialID, holder: null },
+          gates,
           completedAt: new Date().toISOString(),
+          mandate: built.mandate,
         });
         await cartStore.write(new Map());
       }
-      res.json({ mandate, gates, completed, binding: buildBindingFields(order, origin) });
+      // The page receipt reads mandate.id + gates; carry the SD-JWT token too.
+      res.json({ mandate: { id: built.mandateId, format: "ap2-sdjwt", token: built.mandate }, gates, completed, binding: buildBindingFields(order, origin) });
     } catch (err) {
       res.status(400).json({ error: (err as Error).message });
     }

@@ -12,6 +12,10 @@ export interface CompletedOrder {
   instrument: { issuer: string | null; maskedAccount: string | null; holder: string | null } | null;
   gates: { gate: string; pass: boolean; detail: string }[];
   completedAt: string;
+  // The compact AP2 SD-JWT PaymentMandate produced by the AP2 sidecar, when the
+  // gate ran through it. Optional: the instant-demo (`/checkout/place-order`)
+  // path completes without one.
+  mandate?: string;
 }
 
 export interface OrderStore {

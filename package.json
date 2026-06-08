@@ -15,6 +15,7 @@
     "build": "npm run typecheck && npm run build:ui && npm run build:server",
     "start:stdio": "node dist/main.js --stdio",
     "start:http": "node dist/main.js",
+    "start:sidecar": "cd ap2-sidecar && .venv/bin/python -m uvicorn app:app --port ${AP2_SIDECAR_PORT:-8787}",
     "test": "vitest run"
   },
   "dependencies": {
