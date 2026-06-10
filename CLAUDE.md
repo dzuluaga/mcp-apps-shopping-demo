@@ -70,3 +70,24 @@ These are load-bearing. A change that breaks one is blocking, even in "demo" cod
 - Prefer small, well-bounded modules over growing a file past its one clear purpose.
 - Deployment is on Vercel behind the stable alias `mcp-apps-nine.vercel.app/mcp`;
   changes that affect the served origin or that URL need extra care.
+
+## Code review
+
+PRs get both automated and human review:
+
+- **Same-repo PRs** — an automated Claude review (`anthropics/claude-code-action`) runs
+  on every non-draft PR opened from a branch in this repo, grounded in this file's
+  invariants. `claude-review` is a **required status check**: a same-repo PR can't merge
+  until it's green.
+- **Fork / external-contributor PRs** — the automated job is **skipped** (fork runs can't
+  read the `CLAUDE_CODE_OAUTH_TOKEN` secret), so it never blocks you. A skipped required
+  check counts as passing. Those PRs are reviewed by one of:
+  - a maintainer commenting **`@claude`** on the PR (on-demand; runs in base-repo context
+    so it has the secret),
+  - the org-hosted **managed Claude review** integration (auto-reviews forks), and/or
+  - an on-demand deep multi-agent review by a maintainer.
+- **Human review** — at least one approving review is required to merge to `main`, and all
+  review conversations must be resolved first.
+- A PR that edits `.github/workflows/claude-code-review.yml` itself will fail
+  `claude-review` by design (the action validates the workflow matches `main`) and needs
+  an admin merge.
