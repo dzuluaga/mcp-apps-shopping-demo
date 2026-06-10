@@ -17,8 +17,15 @@ concurrency:
 
 jobs:
   claude-review:
-    # Cost control: skip draft PRs.
-    if: github.event.pull_request.draft == false
+    # Skip draft PRs (cost) and fork PRs. Fork runs don't get the
+    # CLAUDE_CODE_OAUTH_TOKEN secret, so the job can't authenticate; since
+    # `claude-review` is a required status check, a *failing* job would block
+    # external/fork PRs forever. A SKIPPED required check counts as passing, so
+    # this guard lets fork PRs through (they're covered by the managed
+    # integration / on-demand review instead).
+    if: >-
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository
     # Optional: Filter by PR author
     # if: |
     #   github.event.pull_request.user.login == 'external-contributor' ||
