@@ -75,6 +75,12 @@ These are load-bearing. A change that breaks one is blocking, even in "demo" cod
 
 PRs get both automated and human review:
 
+> **Maintainers: push your feature branch to this repo — don't fork.** The automatic
+> Claude review only runs on **same-repo** PRs (GitHub withholds secrets from fork-PR
+> workflow runs on a public repo — regardless of your permission level). If you push to a
+> branch here, you get the automatic review for free; if you fork, you only get a review
+> on-demand by commenting `@claude`.
+
 - **Same-repo PRs** — an automated Claude review (`anthropics/claude-code-action`) runs
   on every non-draft PR opened from a branch in this repo, grounded in this file's
   invariants. `claude-review` is a **required status check**: a same-repo PR can't merge
