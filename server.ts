@@ -108,6 +108,9 @@ function cartResult(priced: PricedCart): CallToolResult {
 // function instances). Demo-global (not per-conversation). Orders live in
 // checkout.ts. Every mutation is read -> mutate -> write so concurrent instances
 // converge on the shared store.
+// The widget cart is just the selection + subtotal. Age verification and the
+// loyalty discount are applied per-order on the checkout web page (end of flow),
+// not here, so the cart carries no verification state.
 function priceFrom(cart: Map<string, number>): PricedCart {
   const items = [...cart.entries()].map(([productId, quantity]) => ({ productId, quantity }));
   return priceCart(items);
@@ -181,6 +184,9 @@ export function createServer(): McpServer {
               `add items, change quantities, and remove items.\n` +
               `You CANNOT: place orders or take payment — checkout happens on the merchant's page, where ` +
               `the user completes the purchase with their own account.\n` +
+              `Some items are age-restricted (alcohol). Age verification (21+) and the optional loyalty discount ` +
+              `(10% off) happen on the checkout page that the checkout tool returns — the user completes them there ` +
+              `before authorizing payment; you don't drive them from chat.\n` +
               `Flow:\n` +
               `1. When items are added, briefly confirm the cart and ask if they want to add more or check out.\n` +
               `2. Adjust the cart by id with add-to-cart, set-quantity, and remove-from-cart; read it with get-cart.\n` +
@@ -281,6 +287,11 @@ export function createServer(): McpServer {
       return cartResult(await readPriced());
     },
   );
+
+  // Note: age verification and the loyalty discount are handled entirely on the
+  // checkout web page (the order link from the `checkout` tool), scoped to that
+  // order. There are no separate verify/loyalty tools — the user does both on
+  // that page before authorizing payment.
 
   // Informational, model-only (plain tool, not linked to the UI) so the agent
   // can tell the user about a product they picked without re-rendering the app.

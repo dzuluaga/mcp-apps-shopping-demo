@@ -6,6 +6,10 @@ export const CATALOG_META_KEY = "product-picker/catalog";
 // so the model doesn't re-render it as text.
 export const CART_META_KEY = "product-picker/cart";
 
+// Loyalty members get this percentage off the whole cart when they present a
+// valid loyalty credential. Whole-cart, mirrors a2ui_concierge.
+export const LOYALTY_DISCOUNT_PCT = 10;
+
 export interface Product {
   id: string;
   name: string;
@@ -14,6 +18,9 @@ export interface Product {
   image: string;
   category: string;
   description: string;
+  // Minimum age required to purchase (e.g. 21 for alcohol). Absent = no age
+  // restriction. Drives the age-verification threshold at checkout.
+  minimumAge?: number;
 }
 
 export interface CartItemInput {
@@ -33,9 +40,23 @@ export interface PricedCartLine {
 export interface PricedCart {
   lines: PricedCartLine[];
   itemCount: number;
+  subtotal: number;
+  discount: number;
   total: number;
   currency: string;
   unknownIds: string[];
+  // True when any line is age-restricted (alcohol).
+  hasAgeRestricted: boolean;
+  // Reflects verificationStore at pricing time (false in pure/unit pricing).
+  ageVerified: boolean;
+  loyaltyApplied: boolean;
+}
+
+// Verification flags that influence pricing/gating. Passed by the server from
+// verificationStore; defaults to all-false for pure pricing.
+export interface PriceOpts {
+  ageVerified?: boolean;
+  loyaltyApplied?: boolean;
 }
 
 export const CATALOG: Product[] = [
@@ -111,10 +132,50 @@ export const CATALOG: Product[] = [
     category: "Accessories",
     description: "Aluminum adjustable laptop stand, folds flat.",
   },
+  {
+    id: "celebration-champagne",
+    name: "Celebration Champagne Gift Set",
+    price: 89.0,
+    currency: "USD",
+    image: "https://picsum.photos/seed/celebration-champagne/400/300",
+    category: "Beverages",
+    description: "Brut champagne duo with two crystal flutes. 21+ only.",
+    minimumAge: 21,
+  },
+  {
+    id: "oak-whiskey",
+    name: "Oak Reserve Whiskey Collection",
+    price: 124.0,
+    currency: "USD",
+    image: "https://picsum.photos/seed/oak-whiskey/400/300",
+    category: "Beverages",
+    description: "Trio of small-batch aged whiskeys. 21+ only.",
+    minimumAge: 21,
+  },
+  {
+    id: "craft-beer-sampler",
+    name: "Craft Beer Sampler",
+    price: 48.0,
+    currency: "USD",
+    image: "https://picsum.photos/seed/craft-beer-sampler/400/300",
+    category: "Beverages",
+    description: "Twelve-can sampler of regional craft brews. 21+ only.",
+    minimumAge: 21,
+  },
 ];
 
 export function getProduct(productId: string): Product | undefined {
   return CATALOG.find((p) => p.id === productId);
+}
+
+
+export function requiredAgeForLines(lines: { id: string }[]): number | null {
+  let max: number | null = null;
+  for (const { id } of lines) {
+    const m = getProduct(id)?.minimumAge;
+    if (m != null && (max === null || m > max)) max = m;
+  }
+  return max;
 }
 
 export interface Review {
@@ -159,16 +220,29 @@ export const REVIEWS: Record<string, Review[]> = {
     { author: "Marcus D.", rating: 5, title: "Rock solid", body: "No wobble even while typing hard. Folds flat for travel." },
     { author: "Iris V.", rating: 4, title: "Better posture instantly", body: "Raised my screen to eye level. Wish it went just a bit higher." },
   ],
+  "celebration-champagne": [
+    { author: "Nadia P.", rating: 5, title: "Perfect gift", body: "Beautiful set, flutes felt premium and the champagne was crisp." },
+    { author: "Leo M.", rating: 4, title: "Lovely", body: "Great for a toast. Packaging was elegant." },
+  ],
+  "oak-whiskey": [
+    { author: "Quinn R.", rating: 5, title: "Smooth trio", body: "Each bottle has a distinct character. The aged one is exceptional." },
+    { author: "Dana S.", rating: 4, title: "Solid collection", body: "Good range. Pours are generous for a sampler." },
+  ],
+  "craft-beer-sampler": [
+    { author: "Theo K.", rating: 5, title: "Great variety", body: "Twelve different cans, all fresh. Found two new favorites." },
+    { author: "Mara V.", rating: 4, title: "Fun sampler", body: "Nice mix of styles. A couple were too hoppy for me but that's taste." },
+  ],
 };
 
 export function getReviews(productId: string): Review[] {
   return REVIEWS[productId] ?? [];
 }
 
-export function priceCart(items: CartItemInput[]): PricedCart {
+export function priceCart(items: CartItemInput[], opts: PriceOpts = {}): PricedCart {
   const byId = new Map(CATALOG.map((p) => [p.id, p]));
   const lines: PricedCartLine[] = [];
   const unknownIds: string[] = [];
+  let hasAgeRestricted = false;
   for (const { productId, quantity } of items) {
     const product = byId.get(productId);
     if (!product) {
@@ -176,6 +250,7 @@ export function priceCart(items: CartItemInput[]): PricedCart {
       continue;
     }
     if (quantity <= 0) continue;
+    if (product.minimumAge != null) hasAgeRestricted = true;
     lines.push({
       id: product.id,
       name: product.name,
@@ -186,9 +261,25 @@ export function priceCart(items: CartItemInput[]): PricedCart {
     });
   }
   const itemCount = lines.reduce((sum, l) => sum + l.quantity, 0);
-  const total = lines.reduce((sum, l) => sum + l.lineTotal, 0);
+  const subtotal = lines.reduce((sum, l) => sum + l.lineTotal, 0);
+  const loyaltyApplied = !!opts.loyaltyApplied;
+  const discount = loyaltyApplied
+    ? Math.round(subtotal * (LOYALTY_DISCOUNT_PCT / 100) * 100) / 100
+    : 0;
+  const total = Math.round((subtotal - discount) * 100) / 100;
   const currency = lines[0]?.currency ?? "USD";
-  return { lines, itemCount, total, currency, unknownIds };
+  return {
+    lines,
+    itemCount,
+    subtotal,
+    discount,
+    total,
+    currency,
+    unknownIds,
+    hasAgeRestricted,
+    ageVerified: !!opts.ageVerified,
+    loyaltyApplied,
+  };
 }
 
 // An order is a snapshot of the priced cart at checkout time. The demo does not
@@ -198,6 +289,8 @@ export interface Order {
   id: string;
   lines: PricedCartLine[];
   itemCount: number;
+  subtotal: number;
+  discount: number;
   total: number;
   currency: string;
   createdAt: string;
@@ -205,7 +298,7 @@ export interface Order {
 
 // Snapshots cart items into an order. Unknown product ids are dropped (not
 // validated).
-export function createOrder(items: CartItemInput[], id: string): Order {
-  const { lines, itemCount, total, currency } = priceCart(items);
-  return { id, lines, itemCount, total, currency, createdAt: new Date().toISOString() };
+export function createOrder(items: CartItemInput[], id: string, opts: PriceOpts = {}): Order {
+  const { lines, itemCount, subtotal, discount, total, currency } = priceCart(items, opts);
+  return { id, lines, itemCount, subtotal, discount, total, currency, createdAt: new Date().toISOString() };
 }

@@ -1,13 +1,18 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { createServer } from "./server.js";
-import { startCheckoutHttpServer } from "./checkout.js";
 import { createApp } from "./app.js";
 
 async function startStdioServer(): Promise<void> {
   // stdio mode has no HTTP server of its own, but openLink needs a URL to open.
-  // Start the mock checkout listener in the same process so it shares the cart/
-  // order state with the stdio server.
-  startCheckoutHttpServer();
+  // Serve the FULL express app (checkout page + payment & credential gates +
+  // /checkout/order-status and /checkout/verification-status) in the same
+  // process so every link the widget opens resolves and shares cart/order/
+  // verification state with the stdio server.
+  const port = Number(process.env.CHECKOUT_PORT ?? 3030);
+  const publicBaseUrl = process.env.PUBLIC_BASE_URL ?? `http://localhost:${port}`;
+  createApp({ publicBaseUrl }).listen(port, () => {
+    console.error(`Checkout + gates on ${publicBaseUrl}`);
+  });
   await createServer().connect(new StdioServerTransport());
 }
 

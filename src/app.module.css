@@ -207,3 +207,34 @@
   opacity: 0.45;
   cursor: not-allowed;
 }
+
+.ageBadge {
+  display: inline-block;
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #b00020;
+  border: 1px solid #b00020;
+  border-radius: 4px;
+  padding: 0 0.3rem;
+  margin-left: 0.4rem;
+  vertical-align: middle;
+}
+.discountRow { color: #0a7f2e; font-size: 0.85rem; }
+.gateBtn {
+  font-size: 0.9rem;
+  padding: 0.5rem 0.8rem;
+  border-radius: 6px;
+  border: 1px solid #b00020;
+  background: #fff;
+  color: #b00020;
+  cursor: pointer;
+}
+.loyaltyBtn {
+  font-size: 0.9rem;
+  padding: 0.5rem 0.8rem;
+  border-radius: 6px;
+  border: 1px solid #1a7f37;
+  background: #fff;
+  color: #1a7f37;
+  cursor: pointer;
+}

@@ -105,6 +105,24 @@ amount-bound Digital Payment Credentials / AP2 variant where the wallet signs
 over the exact cart total via OpenID4VP, carried phone↔desktop over FIDO caBLE
 (see [`payment-gate/dc-payment/`](payment-gate/dc-payment/README.md)).
 
+### Age verification & loyalty discount
+
+Some products are age-restricted (alcohol). Age verification and the optional
+loyalty discount happen on the **checkout page** (the link the `checkout` tool
+returns), at the end of the flow:
+
+- If the order contains an age-restricted item, **payment is locked** and a
+  **Verify age** button requests a digital ID (`age_over_21`) via OpenID4VP —
+  with an instant-demo fallback when no wallet/Chrome 141+ is available. The
+  threshold is per product (`minimumAge`), and the check fails closed (requires
+  an explicit positive claim).
+- **Apply loyalty discount** presents a loyalty credential (validated
+  `membership_number`) for 10% off the whole cart.
+
+Verification is **scoped per order** (`product-picker:verification:<orderId>`),
+so on the shared deployment one shopper's verification never affects another's
+checkout. It's cleared when the purchase completes.
+
 ## Demo
 
 See it running end to end (browse → edit cart → checkout with Digital Payment

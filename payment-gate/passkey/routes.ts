@@ -2,9 +2,10 @@ import express, { type Express, type Request, type Response } from "express";
 import { createRequire } from "node:module";
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { decodeOrder } from "../../checkout.js";
+import { decodeOrder, isAgeUnverified } from "../../checkout.js";
 import { cartStore } from "../../cartStore.js";
 import { orderStore } from "../../orderStore.js";
+import { verificationStore } from "../../verificationStore.js";
 import { deriveOrigin } from "../origin.js";
 import { gateSecret } from "../challengeToken.js";
 import { buildPasskeyMandate, buildBindingFields, runGates } from "../mandate.js";
@@ -65,6 +66,12 @@ export function registerPasskeyGate(app: Express): void {
       const authenticator = await verifyPasskeyAssertion({ response, challengeToken, origin, secret: gateSecret() });
       const mandate = buildPasskeyMandate({ order, authenticator, origin });
       const gates = runGates(mandate);
+      // Server-side age gate — refuse to complete an age-restricted order that
+      // has no recorded age verification, even if the payment gates pass.
+      if (await isAgeUnverified(order)) {
+        res.status(403).json({ mandate, gates, completed: false, error: "Age verification required for this order." });
+        return;
+      }
       // Only a fully-authorized mandate completes the purchase: record it for the
       // agent to poll and clear the shared cart so the next session starts fresh.
       const completed = gates.every((g) => g.pass);
@@ -80,6 +87,8 @@ export function registerPasskeyGate(app: Express): void {
           completedAt: new Date().toISOString(),
         });
         await cartStore.write(new Map());
+        // Completed purchase: clear this order's verification.
+        await verificationStore.clear(order.id);
       }
       res.json({ mandate, gates, completed, binding: buildBindingFields(order, origin) });
     } catch (err) {

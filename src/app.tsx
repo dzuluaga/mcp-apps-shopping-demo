@@ -93,8 +93,12 @@ function placeholderDataUri(p: Product): string {
 }
 
 function emptyCart(): PricedCart {
-  return { lines: [], itemCount: 0, total: 0, currency: "USD", unknownIds: [] };
+  return {
+    lines: [], itemCount: 0, subtotal: 0, discount: 0, total: 0, currency: "USD",
+    unknownIds: [], hasAgeRestricted: false, ageVerified: false, loyaltyApplied: false,
+  };
 }
+
 
 // Recompute a priced cart with one product set to an absolute quantity (0
 // removes). Used for optimistic UI: the stepper updates instantly, then the
@@ -417,7 +421,10 @@ function Picker({ products, cart, insets, setQuantity, checkout, confirmedOrder 
                 />
                 <div className={styles.cardBody}>
                   <span className={styles.category}>{p.category}</span>
-                  <span className={styles.name}>{p.name}</span>
+                  <span className={styles.name}>
+                    {p.name}
+                    {p.minimumAge != null && <span className={styles.ageBadge}>{p.minimumAge}+</span>}
+                  </span>
                   <span className={styles.desc}>{p.description}</span>
                   <div className={styles.priceRow}>
                     <span className={styles.price}>{formatMoney(p.price, p.currency)}</span>

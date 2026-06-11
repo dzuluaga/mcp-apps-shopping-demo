@@ -104,3 +104,47 @@ describe("checkout page authorization affordance", () => {
     expect(html).toContain("cross-device");
   });
 });
+
+describe("checkout page loyalty (end of flow)", () => {
+  it("offers an Apply loyalty discount link when loyalty is not yet applied", () => {
+    const order = createOrder([{ productId: CATALOG[0].id, quantity: 2 }], "ORD-DISC02");
+    const { html } = checkoutResponse(encodeOrder(order), { loyaltyApplied: false });
+    expect(html).toContain("/credential-gate/loyalty?order=");
+    expect(html).toContain("Apply loyalty discount");
+  });
+
+  it("shows the discount line and total once loyalty is applied", () => {
+    const order = createOrder([{ productId: CATALOG[0].id, quantity: 2 }], "ORD-DISC03");
+    const { html } = checkoutResponse(encodeOrder(order), { loyaltyApplied: true });
+    expect(html).toContain("Loyalty discount");
+    expect(html).toMatch(/-\s*\$/); // negative discount amount rendered
+  });
+});
+
+describe("checkout page age gating (end of flow)", () => {
+  const alcohol = CATALOG.find((p) => p.minimumAge != null)!;
+
+  it("locks payment and offers a Verify age link when alcohol is unverified", () => {
+    const order = createOrder([{ productId: alcohol.id, quantity: 1 }], "ORD-AGE01");
+    const { html } = checkoutResponse(encodeOrder(order), { ageVerified: false });
+    expect(html).toContain("/credential-gate/age?order=");
+    expect(html).toContain("Verify age");
+    expect(html).toContain("Payment is locked");
+    expect(html).not.toContain("/payment-gate/passkey?order=");
+  });
+
+  it("unlocks payment once age is verified", () => {
+    const order = createOrder([{ productId: alcohol.id, quantity: 1 }], "ORD-AGE02");
+    const { html } = checkoutResponse(encodeOrder(order), { ageVerified: true });
+    expect(html).toContain("Age verified");
+    expect(html).toContain("/payment-gate/passkey?order=");
+    expect(html).not.toContain("Payment is locked");
+  });
+
+  it("does not gate a cart without alcohol", () => {
+    const order = createOrder([{ productId: "drift-mouse", quantity: 1 }], "ORD-AGE03");
+    const { html } = checkoutResponse(encodeOrder(order));
+    expect(html).not.toContain("Verify age");
+    expect(html).toContain("/payment-gate/passkey?order=");
+  });
+});

@@ -3,8 +3,12 @@
 // adapted to this repo's Order. No gate trusts a `verified` boolean — each is
 // re-derived from the mandate's own fields.
 import { createHash, randomUUID } from "node:crypto";
-import type { Order } from "../catalog.js";
+import { LOYALTY_DISCOUNT_PCT, type Order } from "../catalog.js";
 import type { Origin } from "./origin.js";
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
 
 const PAYEE_NAME = "Product Picker Demo";
 
@@ -118,15 +122,24 @@ export interface GateResult {
 
 export function runGates(mandate: PasskeyMandate): GateResult[] {
   const ua = mandate.userAuthorization;
-  const lineSum = mandate.cart.lines.reduce((sum, l) => sum + l.lineTotal, 0);
+  const cart = mandate.cart;
+  const lineSum = round2(cart.lines.reduce((sum, l) => sum + l.lineTotal, 0));
   const results: GateResult[] = [];
 
-  // Gate 1 — amount integrity: re-sum the cart lines, do NOT trust payment.amount.
-  const amountOk = lineSum === mandate.payment.amount && lineSum === mandate.cart.total;
+  // Gate 1 — amount integrity. Re-sum the (undiscounted) cart lines and re-derive
+  // the payable total; payment.amount is NOT trusted. A loyalty discount, if
+  // present, must be either zero or EXACTLY LOYALTY_DISCOUNT_PCT of the line sum
+  // — this both lets a legitimately discounted order pass and rejects a token
+  // tampered with an arbitrary discount. Payable must equal cart.total AND the
+  // authorized payment.amount.
+  const discount = cart.discount ?? 0;
+  const discountOk = discount === 0 || discount === round2(lineSum * (LOYALTY_DISCOUNT_PCT / 100));
+  const payable = round2(lineSum - discount);
+  const amountOk = discountOk && payable === cart.total && payable === mandate.payment.amount;
   results.push({
     gate: "Amount integrity",
     pass: amountOk,
-    detail: `lines=${lineSum} · payment=${mandate.payment.amount} · cart.total=${mandate.cart.total}`,
+    detail: `lines=${lineSum} · discount=${discount} · payable=${payable} · payment=${mandate.payment.amount} · cart.total=${cart.total}`,
   });
 
   // Gate 2 — authorization present & structurally a webauthn assertion.

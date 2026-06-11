@@ -1,7 +1,19 @@
 import http from "node:http";
 import { randomBytes } from "node:crypto";
-import { createOrder, type CartItemInput, type Order } from "./catalog.js";
+import { createOrder, requiredAgeForLines, LOYALTY_DISCOUNT_PCT, type CartItemInput, type Order, type PriceOpts } from "./catalog.js";
 import type { CompletedOrder } from "./orderStore.js";
+import { verificationStore } from "./verificationStore.js";
+
+// Server-side age gate. The checkout page's payment lock is render-only, so a
+// direct POST to any completion endpoint could otherwise place an age-restricted
+// order without verification. Every completion path must call this and refuse to
+// write the order when it returns true. Returns true iff the order contains an
+// age-restricted item AND this order has no recorded age verification.
+export async function isAgeUnverified(order: Order): Promise<boolean> {
+  if (requiredAgeForLines(order.lines) == null) return false;
+  const v = await verificationStore.read(order.id);
+  return !v.ageVerified;
+}
 
 // Base URL the checkout link points at. Falls back to localhost for local runs;
 // on Vercel it derives from the project's production domain so the link resolves
@@ -62,8 +74,11 @@ export function decodeOrder(token: string): Order | undefined {
 
 // Snapshots cart items into an order and returns its id plus the URL of the mock
 // checkout page. The order itself rides in the URL's `order` token.
-export function createCheckoutOrder(items: CartItemInput[]): { orderId: string; checkoutUrl: string } {
-  const order = createOrder(items, nextOrderId());
+export function createCheckoutOrder(
+  items: CartItemInput[],
+  opts: PriceOpts = {},
+): { orderId: string; checkoutUrl: string } {
+  const order = createOrder(items, nextOrderId(), opts);
   const token = encodeOrder(order);
   return { orderId: order.id, checkoutUrl: `${checkoutBaseUrl}/checkout?order=${token}` };
 }
@@ -98,56 +113,59 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
-function renderCheckoutPage(order: Order, token: string): string {
+// Verification state that drives the end-of-flow gating on the checkout page.
+export interface CheckoutVerification {
+  ageVerified?: boolean;
+  loyaltyApplied?: boolean;
+}
+
+// Recompute the order's discount/total from its subtotal given the current
+// loyalty state, so the displayed total — and the token the payment gates bind
+// to — always reflect what the user has done on this page.
+function recomputeOrder(order: Order, loyaltyApplied: boolean): Order {
+  const subtotal = order.subtotal;
+  const discount = loyaltyApplied ? Math.round(subtotal * (LOYALTY_DISCOUNT_PCT / 100) * 100) / 100 : 0;
+  const total = Math.round((subtotal - discount) * 100) / 100;
+  return { ...order, subtotal, discount, total };
+}
+
+function renderCheckoutPage(baseOrder: Order, v: CheckoutVerification = {}): string {
+  const loyaltyApplied = !!v.loyaltyApplied;
+  const ageVerified = !!v.ageVerified;
+  const order = recomputeOrder(baseOrder, loyaltyApplied);
+  // Discounted token: the payment gates decode this and bind to order.total.
+  const token = encodeOrder(order);
+  const enc = encodeURIComponent(token);
+  const requiredAge = requiredAgeForLines(order.lines);
+  const hasAgeRestricted = requiredAge != null;
+  const blocked = hasAgeRestricted && !ageVerified;
+
   const rows = order.lines
-    .map(
-      (l) => `<tr>
-  <td>${l.quantity}× ${escapeHtml(l.name)}</td>
-  <td class="num">${formatMoney(l.lineTotal, l.currency)}</td>
-</tr>`,
-    )
+    .map((l) => `<tr><td>${l.quantity}× ${escapeHtml(l.name)}</td><td class="num">${formatMoney(l.lineTotal, l.currency)}</td></tr>`)
     .join("\n");
-  return `<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Checkout · ${escapeHtml(order.id)}</title>
-<style>
-  body { font-family: system-ui, -apple-system, sans-serif; max-width: 560px; margin: 40px auto; padding: 0 16px; color: #1a1a1a; }
-  h1 { font-size: 20px; }
-  .meta { color: #666; font-size: 13px; margin-bottom: 24px; }
-  table { width: 100%; border-collapse: collapse; }
-  td { padding: 10px 0; border-bottom: 1px solid #eee; font-size: 14px; }
-  .num { text-align: right; font-variant-numeric: tabular-nums; }
-  .total { font-weight: 600; font-size: 16px; }
-  .total td { border-bottom: none; padding-top: 16px; }
-  .note { color: #888; font-size: 12px; margin-top: 12px; text-align: center; }
-  button { display: block; margin-top: 12px; width: 100%; padding: 12px; font-size: 14px; font-weight: 500; color: #1a1a1a; background: #fff; border: 1px solid #d0d0d0; border-radius: 8px; cursor: pointer; box-sizing: border-box; }
-  button:disabled { color: #888; cursor: default; }
-</style>
-</head>
-<body>
-  <h1>Checkout</h1>
-  <div class="meta">Order ${escapeHtml(order.id)} · ${order.itemCount} item(s)</div>
-  <table>
-    ${rows}
-    <tr class="total"><td>Total</td><td class="num">${formatMoney(order.total, order.currency)}</td></tr>
-  </table>
-  <a id="authorize" href="/payment-gate/passkey?order=${encodeURIComponent(token)}"
-     style="display:block;margin-top:24px;width:100%;padding:14px;font-size:15px;font-weight:600;
-     text-align:center;color:#fff;background:#1a7f37;border-radius:8px;text-decoration:none;box-sizing:border-box;">
-    Authorize payment with a passkey
-  </a>
-  <a id="authorize-xdev" href="/payment-gate/dc-payment?order=${encodeURIComponent(token)}"
-     style="display:block;margin-top:10px;width:100%;padding:12px;font-size:14px;font-weight:500;
-     text-align:center;color:#1a7f37;background:#fff;border:1px solid #1a7f37;border-radius:8px;text-decoration:none;box-sizing:border-box;">
-    Authorize on my phone (cross-device)
-  </a>
-  <div class="note">You'll confirm the exact amount with your device. Demo — no real charge.</div>
-  <button id="place">Place order (instant demo)</button>
-  <div class="note">Skips the device prompt — no real charge.</div>
-  <script>
+
+  const loyaltySection = loyaltyApplied
+    ? `<div class="ok">✓ Loyalty discount applied (${LOYALTY_DISCOUNT_PCT}% off)</div>`
+    : `<a class="btn-ghost" href="/credential-gate/loyalty?order=${enc}">🎟️ Apply loyalty discount (${LOYALTY_DISCOUNT_PCT}% off)</a>`;
+
+  const ageSection = !hasAgeRestricted
+    ? ""
+    : ageVerified
+      ? `<div class="ok">✓ Age verified — ${requiredAge}+</div>`
+      : `<div class="warn">🔒 This order contains age-restricted items. Verify you're ${requiredAge} or older to continue.</div>
+         <a class="btn-age" href="/credential-gate/age?order=${enc}">Verify age (${requiredAge}+)</a>`;
+
+  const paymentSection = blocked
+    ? `<div class="locked">Payment is locked until age verification is complete.</div>`
+    : `<a id="authorize" class="btn-pay" href="/payment-gate/passkey?order=${enc}">Authorize payment with a passkey</a>
+       <a id="authorize-xdev" class="btn-pay-o" href="/payment-gate/dc-payment?order=${enc}">Authorize on my phone (cross-device)</a>
+       <div class="note">You'll confirm the exact amount with your device. Demo — no real charge.</div>
+       <button id="place">Place order (instant demo)</button>
+       <div class="note">Skips the device prompt — no real charge.</div>`;
+
+  const placeScript = blocked
+    ? ""
+    : `<script>
     document.getElementById('place').addEventListener('click', async function () {
       this.disabled = true;
       this.textContent = 'Placing order…';
@@ -165,7 +183,51 @@ function renderCheckoutPage(order: Order, token: string): string {
         alert('Could not place the order. Please try again.');
       }
     });
-  </script>
+  </script>`;
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Checkout · ${escapeHtml(order.id)}</title>
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; max-width: 560px; margin: 40px auto; padding: 0 16px; color: #1a1a1a; }
+  h1 { font-size: 20px; }
+  .meta { color: #666; font-size: 13px; margin-bottom: 24px; }
+  table { width: 100%; border-collapse: collapse; }
+  td { padding: 10px 0; border-bottom: 1px solid #eee; font-size: 14px; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .disc td { color: #0a7f2e; }
+  .total { font-weight: 600; font-size: 16px; }
+  .total td { border-bottom: none; padding-top: 16px; }
+  .note { color: #888; font-size: 12px; margin-top: 12px; text-align: center; }
+  .section { margin-top: 20px; }
+  .ok { color: #0a7f2e; font-weight: 600; font-size: 14px; padding: 10px 0; }
+  .warn { background: #fff7ed; border-left: 4px solid #d97706; border-radius: 6px; padding: 10px 12px; font-size: 13px; color: #92400e; margin-bottom: 10px; }
+  .locked { color: #b00020; font-size: 13px; text-align: center; padding: 14px; border: 1px dashed #e0a0a0; border-radius: 8px; margin-top: 20px; }
+  a.btn-ghost, a.btn-age, a.btn-pay, a.btn-pay-o { display:block; text-align:center; text-decoration:none; border-radius:8px; box-sizing:border-box; }
+  a.btn-ghost { margin-top: 12px; padding: 12px; font-size: 14px; font-weight: 500; color: #1a7f37; background: #fff; border: 1px solid #1a7f37; }
+  a.btn-age { margin-top: 4px; padding: 14px; font-size: 15px; font-weight: 600; color: #fff; background: #b00020; }
+  a.btn-pay { margin-top: 8px; padding: 14px; font-size: 15px; font-weight: 600; color: #fff; background: #1a7f37; }
+  a.btn-pay-o { margin-top: 10px; padding: 12px; font-size: 14px; font-weight: 500; color: #1a7f37; background: #fff; border: 1px solid #1a7f37; }
+  button { display: block; margin-top: 12px; width: 100%; padding: 12px; font-size: 14px; font-weight: 500; color: #1a1a1a; background: #fff; border: 1px solid #d0d0d0; border-radius: 8px; cursor: pointer; box-sizing: border-box; }
+  button:disabled { color: #888; cursor: default; }
+</style>
+</head>
+<body>
+  <h1>Checkout</h1>
+  <div class="meta">Order ${escapeHtml(order.id)} · ${order.itemCount} item(s)</div>
+  <table>
+    ${rows}
+    ${order.discount > 0 ? `<tr class="disc"><td>Loyalty discount (${LOYALTY_DISCOUNT_PCT}%)</td><td class="num">-${formatMoney(order.discount, order.currency)}</td></tr>` : ""}
+    <tr class="total"><td>Total</td><td class="num">${formatMoney(order.total, order.currency)}</td></tr>
+  </table>
+
+  <div class="section">${loyaltySection}</div>
+  ${ageSection ? `<div class="section">${ageSection}</div>` : ""}
+  <div class="section">${paymentSection}</div>
+  ${placeScript}
 </body>
 </html>`;
 }
@@ -181,7 +243,10 @@ function renderNotFound(): string {
 
 // Pure mapping from an encoded order token to an HTTP response, shared by the
 // stdio-side listener and the express /checkout route.
-export function checkoutResponse(token: string | undefined): { status: number; html: string } {
+export function checkoutResponse(
+  token: string | undefined,
+  verification: CheckoutVerification = {},
+): { status: number; html: string } {
   const order = token ? decodeOrder(token) : undefined;
   if (!order) return { status: 404, html: renderNotFound() };
   // decodeOrder only checks the order's top-level shape. A token can still
@@ -189,7 +254,7 @@ export function checkoutResponse(token: string | undefined): { status: number; h
   // Intl.NumberFormat / escapeHtml. Fall back to 404 so the stdio listener (raw
   // http, no error middleware) returns cleanly instead of hanging the socket.
   try {
-    return { status: 200, html: renderCheckoutPage(order, token!) };
+    return { status: 200, html: renderCheckoutPage(order, verification) };
   } catch {
     return { status: 404, html: renderNotFound() };
   }

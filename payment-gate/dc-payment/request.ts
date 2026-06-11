@@ -14,7 +14,7 @@ x509.cryptoProvider.set(webcrypto);
 
 const SIGN_ALG = { name: "ECDSA", namedCurve: "P-256", hash: "SHA-256" } as const;
 
-async function makeReaderCert(rpID: string): Promise<{ x5c: string; privateKey: NodeWebCrypto.CryptoKey }> {
+export async function makeReaderCert(rpID: string): Promise<{ x5c: string; privateKey: NodeWebCrypto.CryptoKey }> {
   const keys = await webcrypto.subtle.generateKey(SIGN_ALG, true, ["sign", "verify"]);
   const cert = await x509.X509CertificateGenerator.createSelfSigned({
     serialNumber: "01",
@@ -31,6 +31,16 @@ async function makeReaderCert(rpID: string): Promise<{ x5c: string; privateKey: 
     ],
   });
   return { x5c: cert.toString("base64"), privateKey: keys.privateKey };
+}
+
+// Ephemeral P-256 key the wallet encrypts its response to. Shared by the payment
+// and credential gates so both build the response-encryption JWK identically.
+export async function makeEncryptionKey(): Promise<{ encJwk: jose.JWK; ecdhPrivateJwk: jose.JWK }> {
+  const encKP = await webcrypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]);
+  const encPubJwk = await webcrypto.subtle.exportKey("jwk", encKP.publicKey);
+  const ecdhPrivateJwk = (await webcrypto.subtle.exportKey("jwk", encKP.privateKey)) as jose.JWK;
+  const encJwk = { kty: "EC", crv: "P-256", x: encPubJwk.x, y: encPubJwk.y, use: "enc", alg: "ECDH-ES", kid: "response-encryption-key" } as jose.JWK;
+  return { encJwk, ecdhPrivateJwk };
 }
 
 export interface SignedRequest {

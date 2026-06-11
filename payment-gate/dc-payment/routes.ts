@@ -1,7 +1,8 @@
 import express, { type Express, type Request, type Response } from "express";
-import { decodeOrder } from "../../checkout.js";
+import { decodeOrder, isAgeUnverified } from "../../checkout.js";
 import { cartStore } from "../../cartStore.js";
 import { orderStore } from "../../orderStore.js";
+import { verificationStore } from "../../verificationStore.js";
 import { deriveOrigin } from "../origin.js";
 import { gateSecret } from "../challengeToken.js";
 import { buildBindingFields } from "../mandate.js";
@@ -54,6 +55,12 @@ export function registerDcPaymentGate(app: Express): void {
     try {
       const origin = originOf(req);
       const { mandate, gates } = await verifyDcPresentation({ order, origin, result, readerContextToken, secret: gateSecret() });
+      // Server-side age gate — refuse to complete an age-restricted order that
+      // has no recorded age verification, even if the payment gates pass.
+      if (await isAgeUnverified(order)) {
+        res.status(403).json({ mandate, gates, completed: false, error: "Age verification required for this order." });
+        return;
+      }
       // Only a fully-authorized mandate completes the purchase: record it for the
       // agent to poll and clear the shared cart so the next session starts fresh.
       const completed = gates.every((g) => g.pass);
@@ -70,6 +77,8 @@ export function registerDcPaymentGate(app: Express): void {
           completedAt: new Date().toISOString(),
         });
         await cartStore.write(new Map());
+        // Completed purchase: clear this order's verification.
+        await verificationStore.clear(order.id);
       }
       res.json({ mandate, gates, completed, binding: buildBindingFields(order, origin) });
     } catch (err) {

@@ -3,11 +3,13 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import cors from "cors";
 import type { Express, Request, Response } from "express";
 import { createServer } from "./server.js";
-import { checkoutResponse, demoCompletedOrder, setCheckoutBaseUrl } from "./checkout.js";
+import { checkoutResponse, decodeOrder, demoCompletedOrder, isAgeUnverified, setCheckoutBaseUrl } from "./checkout.js";
 import { orderStore } from "./orderStore.js";
 import { cartStore } from "./cartStore.js";
 import { registerPasskeyGate } from "./payment-gate/passkey/routes.js";
 import { registerDcPaymentGate } from "./payment-gate/dc-payment/routes.js";
+import { registerCredentialGate } from "./payment-gate/credential-gate/routes.js";
+import { verificationStore } from "./verificationStore.js";
 
 export interface AppOptions {
   publicBaseUrl: string;
@@ -20,9 +22,19 @@ export function createApp({ publicBaseUrl, allowedHosts }: AppOptions): Express 
   const app = createMcpExpressApp({ host: "0.0.0.0" });
   app.use(cors());
 
-  app.get("/checkout", (req: Request, res: Response) => {
-    const order = typeof req.query.order === "string" ? req.query.order : undefined;
-    const { status, html } = checkoutResponse(order);
+  app.get("/checkout", async (req: Request, res: Response) => {
+    const token = typeof req.query.order === "string" ? req.query.order : undefined;
+    // Age verification + loyalty happen on this page (end of flow). Read the
+    // verification scoped to THIS order so one shopper's state never leaks into
+    // another's checkout.
+    const decoded = token ? decodeOrder(token) : undefined;
+    const v = decoded
+      ? await verificationStore.read(decoded.id)
+      : { ageVerified: false, loyalty: { applied: false, membershipNumber: null } };
+    const { status, html } = checkoutResponse(token, {
+      ageVerified: v.ageVerified,
+      loyaltyApplied: v.loyalty.applied,
+    });
     res.status(status).type("html").send(html);
   });
 
@@ -43,13 +55,22 @@ export function createApp({ publicBaseUrl, allowedHosts }: AppOptions): Express 
   // embedded widget's order-status poll then sees completion and confirms in chat.
   app.post("/checkout/place-order", async (req: Request, res: Response) => {
     const token = typeof req.body?.order === "string" ? req.body.order : undefined;
+    const decoded = token ? decodeOrder(token) : undefined;
     const order = token ? demoCompletedOrder(token) : null;
-    if (!order) {
+    if (!order || !decoded) {
       res.status(400).json({ ok: false, error: "Invalid or missing order token." });
+      return;
+    }
+    // Server-side age gate — the page lock is render-only and a direct POST
+    // would otherwise bypass it.
+    if (await isAgeUnverified(decoded)) {
+      res.status(403).json({ ok: false, error: "Age verification required for this order." });
       return;
     }
     await orderStore.write(order);
     await cartStore.write(new Map());
+    // Completed purchase: clear this order's verification.
+    await verificationStore.clear(order.orderId);
     res.json({ ok: true, orderId: order.orderId });
   });
 
@@ -80,6 +101,7 @@ export function createApp({ publicBaseUrl, allowedHosts }: AppOptions): Express 
 
   registerPasskeyGate(app);
   registerDcPaymentGate(app);
+  registerCredentialGate(app);
 
   return app;
 }

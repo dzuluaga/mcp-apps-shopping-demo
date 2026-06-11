@@ -120,3 +120,100 @@ describe("createApp", () => {
     expect(csp.connect_domains).toContain("http://localhost:3001");
   });
 });
+
+import { encodeOrder } from "./checkout.js";
+import { createOrder } from "./catalog.js";
+
+const ALCOHOL = "celebration-champagne";
+
+function orderToken(id: string, productId = ALCOHOL): string {
+  return encodeOrder(createOrder([{ productId, quantity: 1 }], id));
+}
+const co = (token: string) => `/checkout?order=${encodeURIComponent(token)}`;
+
+describe("credential gate wiring", () => {
+  it("serves the age gate page", async () => {
+    const app = createApp({ publicBaseUrl: "http://localhost:3001" });
+    const res = await request(app).get("/credential-gate/age");
+    expect(res.status).toBe(200);
+    expect(res.text).toContain("Verify your age");
+  });
+
+  it("404s an unknown gate kind", async () => {
+    const app = createApp({ publicBaseUrl: "http://localhost:3001" });
+    const res = await request(app).get("/credential-gate/bogus");
+    expect(res.status).toBe(404);
+  });
+
+  it("rejects a demo verify with no order", async () => {
+    const app = createApp({ publicBaseUrl: "http://localhost:3001" });
+    const res = await request(app).post("/credential-gate/age/demo").send({});
+    expect(res.status).toBe(400);
+  });
+
+  it("instant-demo age verify unlocks payment for THAT order only (no cross-order bleed)", async () => {
+    const app = createApp({ publicBaseUrl: "http://localhost:3001" });
+    const tokenA = orderToken("ORD-A");
+    const tokenB = orderToken("ORD-B");
+    expect((await request(app).get(co(tokenA))).text).toContain("Payment is locked");
+
+    const demo = await request(app).post("/credential-gate/age/demo").send({ order: tokenA });
+    expect(demo.body.verified).toBe(true);
+
+    const afterA = await request(app).get(co(tokenA));
+    expect(afterA.text).toContain("Age verified");
+    expect(afterA.text).not.toContain("Payment is locked");
+
+    // Order B must remain gated — verification is scoped to order A.
+    expect((await request(app).get(co(tokenB))).text).toContain("Payment is locked");
+  });
+
+  it("instant-demo loyalty applies the discount for that order", async () => {
+    const app = createApp({ publicBaseUrl: "http://localhost:3001" });
+    const token = orderToken("ORD-LOY", "aurora-headphones"); // non-alcohol: no age gate
+    await request(app).post("/credential-gate/loyalty/demo").send({ order: token });
+    expect((await request(app).get(co(token))).text).toContain("Loyalty discount");
+  });
+});
+
+describe("server-side age gate (place-order)", () => {
+  it("rejects place-order for an age-restricted order with no age verification (403)", async () => {
+    const app = createApp({ publicBaseUrl: "http://localhost:3001" });
+    const token = orderToken("ORD-BYPASS"); // champagne, never age-verified
+    const res = await request(app).post("/checkout/place-order").send({ order: token });
+    expect(res.status).toBe(403);
+    // The order must not have been recorded.
+    const status = await request(app).get(`/checkout/order-status?orderId=ORD-BYPASS`);
+    expect(status.body.completed).toBe(false);
+  });
+
+  it("allows place-order once the order is age-verified", async () => {
+    const app = createApp({ publicBaseUrl: "http://localhost:3001" });
+    const token = orderToken("ORD-OK");
+    await request(app).post("/credential-gate/age/demo").send({ order: token });
+    const res = await request(app).post("/checkout/place-order").send({ order: token });
+    expect(res.body.ok).toBe(true);
+  });
+
+  it("allows place-order for a non-age-restricted order without verification", async () => {
+    const app = createApp({ publicBaseUrl: "http://localhost:3001" });
+    const token = orderToken("ORD-PLAIN", "aurora-headphones");
+    const res = await request(app).post("/checkout/place-order").send({ order: token });
+    expect(res.body.ok).toBe(true);
+  });
+});
+
+describe("checkout resets verification", () => {
+  it("place-order clears that order's verification", async () => {
+    const app = createApp({ publicBaseUrl: "http://localhost:3001" });
+    const token = orderToken("ORD-RESET1");
+    await request(app).post("/credential-gate/age/demo").send({ order: token });
+    expect((await request(app).get(co(token))).text).toContain("Age verified");
+
+    const placed = await request(app).post("/checkout/place-order").send({ order: token });
+    expect(placed.body.ok).toBe(true);
+
+    // Re-gated after completion.
+    expect((await request(app).get(co(token))).text).toContain("Payment is locked");
+  });
+});

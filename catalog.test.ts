@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { CATALOG, createOrder, getProduct, getReviews, priceCart } from "./catalog.js";
+import { CATALOG, createOrder, getProduct, getReviews, priceCart, LOYALTY_DISCOUNT_PCT } from "./catalog.js";
 
 describe("CATALOG", () => {
   it("has products with required fields", () => {
@@ -151,5 +151,54 @@ describe("getReviews", () => {
 
   it("returns an empty array for an unknown id", () => {
     expect(getReviews("nope")).toEqual([]);
+  });
+});
+
+describe("age-restricted catalog", () => {
+  it("has at least one age-restricted product", () => {
+    expect(CATALOG.some((p) => p.minimumAge != null)).toBe(true);
+  });
+});
+
+describe("priceCart discount + flags", () => {
+  const alcohol = CATALOG.find((p) => p.minimumAge != null)!;
+  const normal = CATALOG.find((p) => p.minimumAge == null)!;
+
+  it("sets hasAgeRestricted when an alcohol item is in the cart", () => {
+    const cart = priceCart([{ productId: alcohol.id, quantity: 1 }]);
+    expect(cart.hasAgeRestricted).toBe(true);
+    const clean = priceCart([{ productId: normal.id, quantity: 1 }]);
+    expect(clean.hasAgeRestricted).toBe(false);
+  });
+
+  it("applies a 10% whole-cart discount when loyaltyApplied", () => {
+    const cart = priceCart([{ productId: normal.id, quantity: 2 }], { loyaltyApplied: true });
+    expect(cart.subtotal).toBe(normal.price * 2);
+    expect(cart.discount).toBe(Math.round(normal.price * 2 * (LOYALTY_DISCOUNT_PCT / 100) * 100) / 100);
+    expect(cart.total).toBe(cart.subtotal - cart.discount);
+    expect(cart.loyaltyApplied).toBe(true);
+  });
+
+  it("no discount without loyalty; total equals subtotal", () => {
+    const cart = priceCart([{ productId: normal.id, quantity: 1 }]);
+    expect(cart.discount).toBe(0);
+    expect(cart.total).toBe(cart.subtotal);
+    expect(cart.loyaltyApplied).toBe(false);
+    expect(cart.ageVerified).toBe(false);
+  });
+
+  it("reflects ageVerified from opts", () => {
+    const cart = priceCart([{ productId: alcohol.id, quantity: 1 }], { ageVerified: true });
+    expect(cart.ageVerified).toBe(true);
+  });
+});
+
+describe("createOrder discount", () => {
+  it("snapshots discount + subtotal", () => {
+    const normal = CATALOG.find((p) => p.minimumAge == null)!;
+    const order = createOrder([{ productId: normal.id, quantity: 2 }], "ORD-DISC01", { loyaltyApplied: true });
+    expect(order.subtotal).toBe(normal.price * 2);
+    expect(order.discount).toBeGreaterThan(0);
+    expect(order.total).toBe(order.subtotal - order.discount);
   });
 });
