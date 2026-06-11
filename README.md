@@ -112,16 +112,21 @@ loyalty discount happen on the **checkout page** (the link the `checkout` tool
 returns), at the end of the flow:
 
 - If the order contains an age-restricted item, **payment is locked** and a
-  **Verify age** button requests a digital ID (`age_over_21`) via OpenID4VP —
-  with an instant-demo fallback when no wallet/Chrome 141+ is available. The
+  **Verify age** button requests a digital ID (`age_over_21`) via OpenID4VP. The
   threshold is per product (`minimumAge`), and the check fails closed (requires
-  an explicit positive claim).
+  an explicit positive claim; the wallet's response must also echo the request
+  nonce, so a captured response can't be replayed).
 - **Apply loyalty discount** presents a loyalty credential (validated
   `membership_number`) for 10% off the whole cart.
 
 Verification is **scoped per order** (`product-picker:verification:<orderId>`),
 so on the shared deployment one shopper's verification never affects another's
 checkout. It's cleared when the purchase completes.
+
+Set `DEMO_MODE=1` to add an **instant-demo button** to both gate pages — a
+wallet-free fallback (no Chrome 141+ needed) that marks the order verified
+without presenting a credential. It's off by default because it bypasses the
+real check; enable it only on demo deployments.
 
 ## Demo
 
@@ -304,7 +309,8 @@ pieces of shared state are handled differently:
    `VERCEL_PROJECT_PRODUCTION_URL`, which Vercel injects automatically, so the
    link points at the deployment's own origin. Set `PUBLIC_BASE_URL` only if you
    want to override it (e.g. a custom domain). `ALLOWED_HOSTS` is optional and
-   off by default.
+   off by default. Set `DEMO_MODE=1` if the deployment should offer the
+   wallet-free instant-demo buttons on the age/loyalty gate pages.
 
 4. **Add the connector** in Claude (or ChatGPT) using the deployment's `/mcp`
    URL — `https://YOUR-PROJECT.vercel.app/mcp`.
