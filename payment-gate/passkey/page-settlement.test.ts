@@ -49,6 +49,9 @@ describe("passkey page settlement beat", () => {
     expect(html).toContain("/payment-gate/qr?data=");
     expect(html).toContain("Scan to verify on HashScan");
     expect(html).toContain("esc(out.settlementError)");
+    // Receipt hands the mandate to the inspector.
+    expect(html).toContain("pp:lastMandate");
+    expect(html).toContain("/payment-gate/inspect");
     expect(html).toContain("esc(s.txId)");
     expect(html).toContain("esc(g.gate)");
     expect(html).toContain("esc(g.detail)");

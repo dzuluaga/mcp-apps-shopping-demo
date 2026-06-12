@@ -9,6 +9,7 @@ import { cartStore } from "./cartStore.js";
 import { registerPasskeyGate } from "./payment-gate/passkey/routes.js";
 import { registerDcPaymentGate } from "./payment-gate/dc-payment/routes.js";
 import { registerQrRoute } from "./payment-gate/qr.js";
+import { registerInspectRoutes } from "./payment-gate/inspect.js";
 import { registerCredentialGate } from "./payment-gate/credential-gate/routes.js";
 import { verificationStore } from "./verificationStore.js";
 
@@ -107,6 +108,7 @@ export function createApp({ publicBaseUrl, allowedHosts }: AppOptions): Express 
   registerPasskeyGate(app);
   registerDcPaymentGate(app);
   registerQrRoute(app);
+  registerInspectRoutes(app);
   registerCredentialGate(app);
 
   return app;

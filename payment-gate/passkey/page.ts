@@ -166,7 +166,11 @@ export function renderPasskeyPage(args: { order: Order; orderToken: string; cros
       const done = out.completed
         ? "<div style=\\"background:#0a7f2e;color:#fff;font-size:1.1rem;font-weight:700;line-height:1.4;padding:1rem 1.1rem;border-radius:8px;margin-bottom:1rem;text-align:center;\\">\u2713 Purchase complete<div style=\\"font-size:0.9rem;font-weight:500;margin-top:0.25rem;\\">You can close this page and return to the chat \u2014 or <a style=\\"color:#fff;\\" href=\\"" + checkoutUrl + "\\">go back to checkout</a>.</div></div>"
         : "";
-      el.innerHTML = done + gates + settlement;
+      // Hand the mandate to the inspector (same-origin): the receipt links to
+      // a jwt.io-style view that re-runs the gates on whatever is pasted.
+      try { localStorage.setItem("pp:lastMandate", JSON.stringify(out.mandate)); } catch {}
+      const inspect = '<div style="margin-top:0.5rem;"><a class="toggle" href="/payment-gate/inspect" target="_blank" rel="noopener">Inspect this mandate \u2192</a></div>';
+      el.innerHTML = done + gates + settlement + inspect;
       el.style.display = "block";
       if (out.completed) btn.textContent = "Authorized \u2713";
     }

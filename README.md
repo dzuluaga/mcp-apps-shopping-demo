@@ -402,6 +402,9 @@ npx @modelcontextprotocol/inspector node dist/main.js --stdio   # inspect tools/
   facilitator / settle / lab)
 - `payment-gate/qr.ts` — SVG QR endpoint for the receipt, locked to
   hashscan.io URLs
+- `payment-gate/inspect.ts` — `/payment-gate/inspect`: jwt.io-style mandate
+  inspector — paste an AP2-shaped mandate or an order token, see the fields and
+  the live gate badges
 - `catalog.ts` — sample products + reviews + `priceCart` / `createOrder` /
   `getProduct` / `getReviews` helpers
 - `src/app.tsx` — React selection UI with a footer Checkout button; one bundle
