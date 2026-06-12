@@ -2,6 +2,14 @@
 
 <table>
 <tr>
+<td align="center" colspan="3">
+<a href="https://www.youtube.com/watch?v=biTqHo2dL7M">
+<img src="https://img.youtube.com/vi/biTqHo2dL7M/maxresdefault.jpg" width="860" alt="Full-flow demo: agentic checkout with cross-device credentials and x402 settlement on Hedera testnet"><br>
+▶︎ <b>Full flow — multi-credential checkout + x402 settlement on Hedera</b> (3 min)
+</a>
+</td>
+</tr>
+<tr>
 <td align="center" width="33%">
 <a href="https://youtube.com/shorts/JA91c2d2DhQ">
 <img src="https://img.youtube.com/vi/JA91c2d2DhQ/hqdefault.jpg" width="280" alt="Demo: Product Picker in the Claude native app"><br>
@@ -160,7 +168,7 @@ Claude builds the cart; loyalty + age credentials presented cross-device from a
 phone (selective disclosure); one passkey biometric → x402 settlement on Hedera
 testnet in ~4s; verified on HashScan.
 
-[![Watch the full-flow demo: agentic checkout with x402 settlement on Hedera](https://img.youtube.com/vi/biTqHo2dL7M/maxresdefault.jpg)](https://www.youtube.com/watch?v=biTqHo2dL7M)
+Watch: <https://www.youtube.com/watch?v=biTqHo2dL7M>
 
 More demos:
 
