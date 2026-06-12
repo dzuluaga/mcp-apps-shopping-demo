@@ -254,7 +254,14 @@ describe("checkout resets verification", () => {
     const placed = await request(app).post("/checkout/place-order").send({ order: token });
     expect(placed.body.ok).toBe(true);
 
-    // Re-gated after completion.
-    expect((await request(app).get(co(token))).text).toContain("Payment is locked");
+    // Revisiting the completed order shows the paid state (not the lock, and
+    // not the payment methods)…
+    const revisited = (await request(app).get(co(token))).text;
+    expect(revisited).toContain("Order paid");
+    expect(revisited).not.toContain('type="radio" name="pm"');
+    // …and the verification really was cleared: a FRESH order with the same
+    // age-restricted item is gated again.
+    const fresh = orderToken("ORD-RESET2");
+    expect((await request(app).get(co(fresh))).text).toContain("Payment is locked");
   });
 });

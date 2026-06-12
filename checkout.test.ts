@@ -82,19 +82,91 @@ describe("checkoutResponse", () => {
     expect(html).toContain(
       new Intl.NumberFormat("en-US", { style: "currency", currency: a.currency }).format(total),
     );
-    expect(html).toContain("Authorize payment");
+    expect(html).toContain("Pay with x402 Hedera");
     expect(html).toContain(orderId);
   });
 });
 
 describe("checkout page authorization affordance", () => {
-  it("offers a primary Authorize payment link to the passkey gate and keeps the instant mock Place order button", () => {
+  it("offers a primary x402 Hedera passkey link to the passkey gate and keeps the instant mock Place order button", () => {
     const order = createOrder([{ productId: "drift-mouse", quantity: 1 }], "ORD-CO01");
     const { status, html } = checkoutResponse(encodeOrder(order));
     expect(status).toBe(200);
     expect(html).toContain("/payment-gate/passkey?order=");
-    expect(html).toContain("Authorize payment");
+    expect(html).toContain("Pay with x402 Hedera");
     expect(html).toContain("Place order");
+  });
+
+  it("presents the methods as a Shopify-style payment-method group with one Pay CTA", () => {
+    const order = createOrder([{ productId: "drift-mouse", quantity: 1 }], "ORD-CO04");
+    const { html } = checkoutResponse(encodeOrder(order));
+    expect(html).toContain("Payment method");
+    // Three selectable methods in one radio group…
+    expect(html.match(/type="radio" name="pm"/g)?.length).toBe(3);
+    expect(html).toContain('value="passkey"');
+    expect(html).toContain('value="xdev"');
+    expect(html).toContain('value="demo"');
+    // …and a single CTA carrying the amount.
+    expect(html).toContain('id="pay"');
+    expect(html).toContain("Pay $69.00");
+  });
+
+  it("shows a paid banner and withholds payment methods once this order is completed", () => {
+    const order = createOrder([{ productId: "drift-mouse", quantity: 1 }], "ORD-PAID1");
+    const completed = {
+      orderId: "ORD-PAID1",
+      mandateId: "mandate_pm_x",
+      amount: order.total,
+      currency: order.currency,
+      method: "passkey",
+      instrument: null,
+      gates: [],
+      completedAt: new Date().toISOString(),
+      settlement: {
+        network: "hedera-testnet" as const,
+        payer: { accountId: "0.0.5555", kind: "session-wallet" as const },
+        payTo: "0.0.2222",
+        amountTinybar: 69_000_000,
+        fxRate: "1 USD = 0.01 HBAR (demo peg)",
+        txId: "0.0.7162784@1700000000.000000000",
+        hashscanUrl: "https://hashscan.io/testnet/transaction/x",
+        settledInMs: 5000,
+        walletAgeMs: 3000,
+        status: "settled" as const,
+        facilitator: "blocky402" as const,
+      },
+    };
+    const { html } = checkoutResponse(encodeOrder(order), {}, completed);
+    expect(html).toContain("Order paid");
+    expect(html).toContain("x402");
+    expect(html).toContain("HashScan");
+    expect(html).not.toContain('type="radio" name="pm"');
+    expect(html).not.toContain("Apply loyalty discount");
+  });
+
+  it("ignores a completed order for a DIFFERENT order id (still payable)", () => {
+    const order = createOrder([{ productId: "drift-mouse", quantity: 1 }], "ORD-PAID2");
+    const other = {
+      orderId: "ORD-OTHER",
+      mandateId: "m",
+      amount: 1,
+      currency: "USD",
+      method: "passkey",
+      instrument: null,
+      gates: [],
+      completedAt: new Date().toISOString(),
+    };
+    const { html } = checkoutResponse(encodeOrder(order), {}, other);
+    expect(html).not.toContain("Order paid");
+    expect(html).toContain('type="radio" name="pm"');
+  });
+
+  it("locked payment hides the whole method group, not just the buttons", () => {
+    const alcohol = CATALOG.find((p) => p.minimumAge != null)!;
+    const order = createOrder([{ productId: alcohol.id, quantity: 1 }], "ORD-CO05");
+    const { html } = checkoutResponse(encodeOrder(order), { ageVerified: false });
+    expect(html).not.toContain('type="radio" name="pm"');
+    expect(html).not.toContain("/payment-gate/dc-payment?order=");
   });
 
   it("offers a secondary cross-device link to the DC payment gate", () => {

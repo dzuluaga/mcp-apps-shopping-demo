@@ -21,6 +21,10 @@ type SetQuantityFn = (productId: string, quantity: number) => Promise<void>;
 // Hand off to checkout: opens the merchant page in the browser. Only available
 // inside a host with a link/open capability; undefined in standalone mode.
 type CheckoutFn = () => Promise<void>;
+// Open an external URL via the host bridge: sandboxed widget iframes block
+// plain target="_blank" anchors, so links must route through openLink /
+// openExternal exactly like the checkout hand-off does.
+type OpenLinkFn = (url: string) => void | Promise<void>;
 
 // Minimal shape of ChatGPT's in-iframe bridge. ChatGPT injects `window.openai`
 // into skybridge widgets; the methods we use are optional-chained because the
@@ -110,15 +114,29 @@ function withQuantity(cart: PricedCart, productId: string, quantity: number): Pr
   return priceCartLocal(filtered);
 }
 
-type CompletedOrder = { orderId: string; amount: number; currency: string; method?: string };
+type CompletedOrder = {
+  orderId: string;
+  amount: number;
+  currency: string;
+  method?: string;
+  // Present when the payment really settled on-chain via x402 (network kept
+  // generic — other chains may follow). The explorer link is the proof.
+  settlement?: {
+    network: string;
+    hashscanUrl: string;
+    payer?: { accountId: string; kind?: string };
+    amountTinybar?: number;
+    settledInMs?: number;
+  };
+};
 
 // How the payment was authorized, for the in-widget confirmation panel.
-function methodLabel(method: string | undefined): string {
+function methodLabel(method: string | undefined, settled: boolean): string {
   switch (method) {
     case "instant-demo":
       return "Instant demo";
     case "passkey":
-      return "Passkey";
+      return settled ? "x402 · Passkey" : "Passkey";
     case "dc-payment":
       return "Cross-device passkey";
     default:
@@ -158,7 +176,10 @@ async function pollOrderCompletion(
 // aware of the order (and that the cart is now empty) without drafting anything
 // into the composer. The in-widget confirmation panel is the user-facing surface.
 function orderContextMarkdown(order: CompletedOrder): string {
-  return `The user completed their purchase on the checkout page — order ${order.orderId}, total ${formatMoney(order.amount, order.currency)} (paid via ${methodLabel(order.method)}). The cart is now empty. If the user brings up the order, confirm these details; otherwise carry on. Show the catalog again whenever they want to keep shopping.`;
+  const settled = order.settlement
+    ? ` The payment settled on-chain via the x402 protocol on ${order.settlement.network}${order.settlement.amountTinybar != null ? ` (${order.settlement.amountTinybar / 1e8} HBAR moved)` : ""}${order.settlement.payer ? `, paid from ${order.settlement.payer.accountId}${order.settlement.payer.kind === "session-wallet" ? " (a fresh wallet created just for this order)" : ""}` : ""} — public proof: ${order.settlement.hashscanUrl} (share this link with the user).`
+    : "";
+  return `The user completed their purchase on the checkout page — order ${order.orderId}, total ${formatMoney(order.amount, order.currency)} (paid via ${methodLabel(order.method, !!order.settlement)}).${settled} The cart is now empty. If the user brings up the order, confirm these details; otherwise carry on. Show the catalog again whenever they want to keep shopping.`;
 }
 
 // Ambient context so the agent always knows the current cart (with ids) and how
@@ -275,10 +296,16 @@ function HostApp() {
       .catch(console.error);
   }, [applyCart]);
 
+  // Hooks must run unconditionally — keep this above the early returns or the
+  // hook count changes when `app` connects and React unmounts the tree.
+  const openLink = useCallback<OpenLinkFn>(async (url) => {
+    await appRef.current?.openLink({ url });
+  }, []);
+
   if (error) return <div className={styles.status}><strong>Error:</strong> {error.message}</div>;
   if (!app) return <div className={styles.status}>Connecting…</div>;
 
-  return <Picker products={products} cart={cart} insets={insets} setQuantity={setQuantity} checkout={checkout} confirmedOrder={confirmedOrder} />;
+  return <Picker products={products} cart={cart} insets={insets} setQuantity={setQuantity} checkout={checkout} openLink={openLink} confirmedOrder={confirmedOrder} />;
 }
 
 // ----- ChatGPT mode: connects to the window.openai bridge -----
@@ -336,7 +363,11 @@ function ChatGptApp() {
     applyToolOutput(structuredOf(refreshed));
   }, [oai, applyToolOutput, cart]);
 
-  return <Picker products={products} cart={cart} setQuantity={setQuantity} checkout={checkout} confirmedOrder={confirmedOrder} />;
+  const openLink = useCallback<OpenLinkFn>(async (url) => {
+    await oai.openExternal?.({ href: url });
+  }, [oai]);
+
+  return <Picker products={products} cart={cart} setQuantity={setQuantity} checkout={checkout} openLink={openLink} confirmedOrder={confirmedOrder} />;
 }
 
 // ----- Standalone mode: runs in a plain browser with the local catalog -----
@@ -365,10 +396,11 @@ interface PickerProps {
   insets?: Insets;
   setQuantity: SetQuantityFn;
   checkout?: CheckoutFn;
+  openLink?: OpenLinkFn;
   confirmedOrder?: CompletedOrder | null;
 }
 
-function Picker({ products, cart, insets, setQuantity, checkout, confirmedOrder }: PickerProps) {
+function Picker({ products, cart, insets, setQuantity, checkout, openLink, confirmedOrder }: PickerProps) {
   const [checkingOut, setCheckingOut] = useState(false);
 
   // The stepper reflects the live cart: each card shows the quantity already in
@@ -473,8 +505,34 @@ function Picker({ products, cart, insets, setQuantity, checkout, confirmedOrder 
             </div>
             <div className={styles.confirmRow}>
               <dt>Payment</dt>
-              <dd>{methodLabel(confirmedOrder.method)}</dd>
+              <dd>{methodLabel(confirmedOrder.method, !!confirmedOrder.settlement)}</dd>
             </div>
+            {confirmedOrder.settlement && (
+              <div className={styles.confirmRow}>
+                <dt>Settlement</dt>
+                <dd>
+                  {confirmedOrder.settlement.amountTinybar != null &&
+                    `${confirmedOrder.settlement.amountTinybar / 1e8} ℏ · `}
+                  {confirmedOrder.settlement.network}
+                  {confirmedOrder.settlement.settledInMs != null &&
+                    ` · in ${(confirmedOrder.settlement.settledInMs / 1000).toFixed(1)}s`}{" "}
+                  ·{" "}
+                  <a
+                    href={confirmedOrder.settlement.hashscanUrl}
+                    onClick={(e) => {
+                      // Sandboxed iframe: plain target="_blank" is blocked by the
+                      // host. Route through the bridge like the checkout link.
+                      e.preventDefault();
+                      const url = confirmedOrder.settlement!.hashscanUrl;
+                      if (openLink) void openLink(url);
+                      else window.open(url, "_blank", "noopener");
+                    }}
+                  >
+                    View on HashScan ↗
+                  </a>
+                </dd>
+              </div>
+            )}
           </dl>
         </div>
       )}

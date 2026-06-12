@@ -8,6 +8,7 @@ import { orderStore } from "./orderStore.js";
 import { cartStore } from "./cartStore.js";
 import { registerPasskeyGate } from "./payment-gate/passkey/routes.js";
 import { registerDcPaymentGate } from "./payment-gate/dc-payment/routes.js";
+import { registerQrRoute } from "./payment-gate/qr.js";
 import { registerCredentialGate } from "./payment-gate/credential-gate/routes.js";
 import { verificationStore } from "./verificationStore.js";
 
@@ -31,10 +32,14 @@ export function createApp({ publicBaseUrl, allowedHosts }: AppOptions): Express 
     const v = decoded
       ? await verificationStore.read(decoded.id)
       : { ageVerified: false, loyalty: { applied: false, membershipNumber: null } };
-    const { status, html } = checkoutResponse(token, {
-      ageVerified: v.ageVerified,
-      loyaltyApplied: v.loyalty.applied,
-    });
+    // A revisited checkout for an already-completed order shows the paid state
+    // (checkoutResponse matches on orderId) instead of re-offering payment.
+    const completed = decoded ? await orderStore.read() : null;
+    const { status, html } = checkoutResponse(
+      token,
+      { ageVerified: v.ageVerified, loyaltyApplied: v.loyalty.applied },
+      completed,
+    );
     res.status(status).type("html").send(html);
   });
 
@@ -101,6 +106,7 @@ export function createApp({ publicBaseUrl, allowedHosts }: AppOptions): Express 
 
   registerPasskeyGate(app);
   registerDcPaymentGate(app);
+  registerQrRoute(app);
   registerCredentialGate(app);
 
   return app;

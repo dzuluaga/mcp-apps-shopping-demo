@@ -22,6 +22,7 @@ import {
 import { createCheckoutOrder, getCheckoutBaseUrl } from "./checkout.js";
 import { cartStore } from "./cartStore.js";
 import { orderStore } from "./orderStore.js";
+import { qrPngBase64 } from "./payment-gate/qr.js";
 
 // Resolve the bundled UI relative to this module, working from both
 // source (server.ts) and compiled (dist/server.js).
@@ -407,7 +408,12 @@ export function createServer(): McpServer {
         "themselves; this tool only reports status. Returns the completed order — order ID, amount, currency, " +
         "payment instrument, and the authorization gate results — or a note that none is complete yet. Call it once " +
         "the user (or the widget) says the purchase finished, then confirm the order ID and total to the user and " +
-        "tell them their items are on the way. Pass orderId to require a specific order.",
+        "tell them their items are on the way. If the order carries a `settlement` block, the payment really settled " +
+        "on-chain via the x402 protocol: tell the user which account paid (settlement.payer.accountId — when payer.kind is session-wallet, a fresh " +
+        "wallet created just for this order), and share the public explorer link (settlement.hashscanUrl) so they " +
+        "can verify the transaction themselves. The result then also carries a QR-code image of that link, rendered " +
+        "in the conversation — tell the user they can scan it with their phone to open the transaction on HashScan. " +
+        "Pass orderId to require a specific order.",
       inputSchema: { orderId: z.string().optional() },
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
@@ -421,9 +427,21 @@ export function createServer(): McpServer {
           ],
         };
       }
+      const content: CallToolResult["content"] = [{ type: "text", text: JSON.stringify(order) }];
+      // Settled on-chain: attach a scannable QR of the explorer link so the
+      // proof lands in the conversation itself, not only on the gate page.
+      // Best-effort — a QR failure must never break the status report.
+      if (order.settlement) {
+        try {
+          const data = await qrPngBase64(order.settlement.hashscanUrl);
+          content.push({ type: "image", data, mimeType: "image/png" });
+        } catch {
+          // text + structured content still carry the link
+        }
+      }
       return {
         structuredContent: order as unknown as Record<string, unknown>,
-        content: [{ type: "text", text: JSON.stringify(order) }],
+        content,
       };
     },
   );
