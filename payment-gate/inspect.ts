@@ -30,7 +30,12 @@ export interface InspectResult {
 async function settlementFor(orderId: string | undefined): Promise<SettlementRecord | undefined> {
   if (!orderId) return undefined;
   const completed = await orderStore.read();
-  return completed?.orderId === orderId ? completed.settlement : undefined;
+  const s = completed?.orderId === orderId ? completed.settlement : undefined;
+  // The record is server-written today, but lock the link to HashScan anyway
+  // (same prefix rule as the QR endpoint) so a future settlement source can't
+  // turn the inspector's anchor into an arbitrary-scheme link.
+  if (s && !s.hashscanUrl.startsWith("https://hashscan.io/")) return { ...s, hashscanUrl: "" };
+  return s;
 }
 
 export async function inspectArtifact(input: string, origin: Origin): Promise<InspectResult> {
@@ -149,6 +154,7 @@ function renderInspectPage(): string {
         row("Issued", esc(m.issuedAt) + ' <span class="dim">expires ' + esc(m.expiresAt) + "</span>") +
         row("Payment", esc(m.payment?.amount) + " " + esc(m.payment?.currency)) +
         row("Authorization", esc(ua.type) + (ua.userVerified != null ? ' <span class="dim">userVerified=' + esc(ua.userVerified) + "</span>" : "")) +
+        ((ua.credentialID || m.subject?.credentialID || m.subject?.credentialId) ? row("Credential", '<span class="mono">' + esc(ua.credentialID ?? m.subject?.credentialID ?? m.subject?.credentialId) + "</span>") : "") +
         (ua.rpID ? row("Bound to", esc(ua.rpID) + ' <span class="dim">' + esc(ua.origin || "") + "</span>") : "") +
         row("Payee", esc(m.payeeId ?? m.cart?.id ?? "")) +
         (m.signature ? row("Signature", '<span class="mono">' + esc(m.signature.alg) + '</span> <span class="dim">' + esc(m.signature.note || "") + "</span>") : "") +

@@ -69,6 +69,25 @@ describe("inspectArtifact", () => {
     expect(result.note).toMatch(/unsigned/i);
   });
 
+  it("a passkey-typed mandate missing its cart becomes a failed parse gate, not a throw", async () => {
+    const result = await inspectArtifact(
+      JSON.stringify({ type: "ap2.PaymentMandate", userAuthorization: { type: "webauthn.assertion" } }),
+      ORIGIN,
+    );
+    expect(result.kind).toBe("passkey-mandate");
+    expect(result.gates).toHaveLength(1);
+    expect(result.gates![0]).toMatchObject({ gate: "Mandate parse", pass: false });
+  });
+
+  it("script-tag values in a pasted mandate come back as data, never rendered server-side", async () => {
+    const m = passkeyMandate();
+    (m.cart.lines[0] as { name: string }).name = '<script>alert(1)</script>';
+    const result = await inspectArtifact(JSON.stringify(m), ORIGIN);
+    // The server returns JSON only — the hostile string survives verbatim as
+    // data and the client is the sole renderer (escaping pinned above).
+    expect(JSON.stringify(result)).toContain("<script>alert(1)</script>");
+  });
+
   it("garbage input → kind unknown with an error message, no throw", async () => {
     const result = await inspectArtifact("not json, not base64url!!", ORIGIN);
     expect(result.kind).toBe("unknown");
@@ -114,8 +133,14 @@ describe("inspect routes", () => {
     const res = await request(app()).get("/payment-gate/inspect");
     expect(res.status).toBe(200);
     expect(res.text).toContain("Mandate inspector");
-    // Pasted-derived values must flow through the client esc() helper.
-    expect(res.text).toContain("esc(");
+    // Pasted-derived values must flow through the client esc() helper —
+    // pinned per call site so stripping any one of them fails the test.
+    expect(res.text).toContain("esc(out.error)");
+    expect(res.text).toContain("esc(g.gate)");
+    expect(res.text).toContain("esc(g.detail)");
+    expect(res.text).toContain("esc(m.id)");
+    expect(res.text).toContain("esc(l.name)");
+    expect(res.text).toContain("esc(o.id)");
     // Honest framing: mock signer, AP2-shaped — not spec-conformant signatures.
     expect(res.text).toContain("AP2-shaped");
     expect(res.text).toContain("mock");
